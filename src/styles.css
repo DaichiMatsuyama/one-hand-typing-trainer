@@ -452,6 +452,39 @@ h1 {
   background: white;
 }
 
+/* 長押しで成績リセット: 押している間、左から塗りつぶして進み具合を見せる */
+.reset-button {
+  position: relative;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.reset-button::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 0;
+  background: #f3c7cb;
+  content: "";
+}
+
+.reset-button.pressing::before {
+  animation: reset-fill var(--long-press-ms, 800ms) linear forwards;
+}
+
+.reset-label {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes reset-fill {
+  to {
+    width: 100%;
+  }
+}
+
 .keyboard-panel {
   grid-area: keyboard;
   min-width: 0;
@@ -794,5 +827,11 @@ h1 {
   .keyboard-panel.complete .key {
     border-color: #176b46;
     background: #b8e7cf;
+  }
+
+  /* 動きを減らす設定では進行アニメーションの代わりに、押下中の色だけ示す */
+  .reset-button.pressing::before {
+    width: 100%;
+    animation: none !important;
   }
 }

@@ -5,12 +5,12 @@ import LevelSelector from './components/LevelSelector.vue'
 import PromptView from './components/PromptView.vue'
 import ResultView from './components/ResultView.vue'
 import { AUTO_ADVANCE_MS } from './appConfig.js'
+import { formatDuration, getTotalStats } from './domain/stats.js'
 import { getFinger, getKeyboardLayout, getLayoutPitchCount } from './data/keyboardLayouts.js'
 import { getQuestion } from './data/questionBank.js'
 import {
   createPracticeSession,
   getElapsedMs,
-  getAccuracy,
   pausePracticeSession,
   resumePracticeSession,
   restorePracticeSession,
@@ -25,6 +25,7 @@ import {
 } from './services/storage.js'
 
 const SNAPSHOT_INTERVAL_MS = 5000
+const RESET_NOTICE_MS = 2000
 
 function createInitialState() {
   try {
@@ -78,17 +79,15 @@ const nextFinger = computed(() => {
 const elapsedMs = computed(() => (
   getElapsedMs(session.value, now.value)
 ))
-const elapsedText = computed(() => {
-  const totalSeconds = Math.floor(elapsedMs.value / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = String(totalSeconds % 60).padStart(2, '0')
-  return `${minutes}:${seconds}`
-})
-const accuracy = computed(() => getAccuracy(session.value))
+// 画面の時間・正答率・ミス・クリア数は、リセットするまでの累計
+const totalStats = computed(() => getTotalStats(results.value, session.value, now.value))
+const elapsedText = computed(() => formatDuration(totalStats.value.elapsedMs))
+const resetNotice = ref('')
 
 let timer
 let feedbackTimer
 let autoAdvanceTimer
+let noticeTimer
 let displayModeQuery
 let lastSnapshotAt = Date.now()
 
@@ -184,6 +183,17 @@ function resetQuestion() {
   beginQuestion()
 }
 
+// 「やり直す」の長押し: 累計成績もすべてゼロにして、今の問題を最初からやり直す
+function resetAllStats() {
+  results.value = { ...defaultResults }
+  beginQuestion()
+  resetNotice.value = '成績をすべてリセットしました'
+  clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => {
+    resetNotice.value = ''
+  }, RESET_NOTICE_MS)
+}
+
 function handlePageHide() {
   const timestamp = Date.now()
   session.value = pausePracticeSession(session.value, timestamp)
@@ -233,6 +243,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearInterval(timer)
   clearTimeout(feedbackTimer)
+  clearTimeout(noticeTimer)
   cancelAutoAdvance()
   window.removeEventListener('pagehide', handlePageHide)
   window.removeEventListener('pageshow', handlePageShow)
@@ -311,14 +322,16 @@ onBeforeUnmount(() => {
 
         <ResultView
           :elapsed-text="elapsedText"
-          :accuracy="accuracy"
-          :mistakes="session.mistakes"
+          :accuracy="totalStats.accuracy"
+          :mistakes="totalStats.mistakes"
           :is-complete="session.isComplete"
           :feedback="session.feedback"
+          :notice="resetNotice"
           :next-key="nextKey"
           :next-finger="nextFinger"
-          :completed-questions="results.completedQuestions"
+          :completed-questions="totalStats.completedQuestions"
           @reset="resetQuestion"
+          @reset-all="resetAllStats"
         />
       </section>
 

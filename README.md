@@ -62,3 +62,8 @@ node scripts/generate-icons.mjs
 公開先は `https://<ユーザー名>.github.io/one-hand-typing-trainer/` です。Viteの `base` は `/one-hand-typing-trainer/` に設定済みです。
 
 仕様資料は [`docs/`](docs/) を参照してください。`docs/decisions.md` がほかの資料より優先されます。
+
+## 操作メモ
+
+- **やり直す**: タップで今の問題を最初からやり直す。**長押し(約0.8秒)で、時間・正答率・ミス・クリア数もすべてゼロに戻す**(押している間ボタンが塗りつぶされる)。
+- 画面の成績は、リセットするまでの累計。
