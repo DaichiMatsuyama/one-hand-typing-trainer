@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ADMIN_LONG_PRESS_MS } from '../appConfig.js'
 import { getKeyboardLayout, getKeySpokenName } from '../data/keyboardLayouts.js'
 import {
   accuracyPercent,
@@ -21,6 +22,7 @@ const props = defineProps({
   access: { type: Object, required: true },
   hand: { type: String, default: 'left' },
   fetchImpl: { type: Function, default: undefined },
+  adminPressMs: { type: Number, default: ADMIN_LONG_PRESS_MS },
 })
 
 const root = ref(null)
@@ -96,6 +98,26 @@ const ERROR_TEXT = {
   server: '成績を読み込めませんでした。しばらくしてから、もう一度ひらいてください。',
 }
 const errorText = computed(() => ERROR_TEXT[errorReason.value] ?? ERROR_TEXT.server)
+
+// 管理者表示の入口: 見出しの長押し(画面には何も表示しない)
+let adminPressTimer
+
+function startAdminPress(event) {
+  if (event.button !== undefined && event.button !== 0) return
+  clearTimeout(adminPressTimer)
+  adminPressTimer = setTimeout(() => {
+    openAdmin()
+    scrollToTop()
+  }, props.adminPressMs)
+}
+
+function cancelAdminPress() {
+  clearTimeout(adminPressTimer)
+}
+
+function closeAdmin() {
+  adminOpen.value = false
+}
 
 async function openAdmin() {
   adminOpen.value = true
@@ -260,6 +282,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(adminPressTimer)
   portraitQuery?.removeEventListener?.('change', onOrientationChange)
 })
 
@@ -269,9 +292,55 @@ defineExpose({ load })
 <template>
   <aside ref="root" class="review-screen" aria-labelledby="review-title" data-testid="review-screen">
     <header class="review-header">
-      <h2 id="review-title">振り返り</h2>
+      <h2
+        id="review-title"
+        class="review-title"
+        data-testid="review-title"
+        @pointerdown="startAdminPress"
+        @pointerup="cancelAdminPress"
+        @pointercancel="cancelAdminPress"
+        @pointerleave="cancelAdminPress"
+        @contextmenu.prevent
+      >振り返り</h2>
       <p class="review-rotate">横向きにすると、練習できます。</p>
     </header>
+
+    <section v-if="adminOpen" class="review-admin" aria-labelledby="review-admin-title">
+      <div class="admin-panel" data-testid="admin-panel">
+        <h3 id="review-admin-title">管理者として見る</h3>
+
+        <form v-if="!devices" class="admin-form" @submit.prevent="submitAdmin">
+          <label for="admin-code">管理者用コード</label>
+          <input
+            id="admin-code"
+            v-model="adminCodeInput"
+            data-testid="admin-code"
+            type="text"
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+            :disabled="adminBusy"
+          />
+          <button type="submit" class="review-button" data-testid="admin-submit" :disabled="adminBusy || !adminCodeInput.trim()">
+            {{ adminBusy ? '確認中…' : '表示する' }}
+          </button>
+        </form>
+
+        <p v-if="adminError" class="review-error" role="alert" data-testid="admin-error">{{ adminError }}</p>
+
+        <ul v-if="devices" class="device-list" data-testid="device-list">
+          <li v-if="devices.length === 0">記録のある端末は、まだありません。</li>
+          <li v-for="device in devices" :key="device.deviceId">
+            <button type="button" class="device-button" :data-device="device.deviceId" @click="viewDevice(device)">
+              <strong>{{ deviceLabel(device) }}</strong>
+              <span>{{ deviceDetail(device) }}</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+      <button type="button" class="review-link" data-testid="admin-close" @click="closeAdmin">閉じる</button>
+    </section>
 
     <p v-if="viewing" class="review-viewing" data-testid="review-viewing">
       <span>管理者表示: {{ viewing.label }}</span>
@@ -394,48 +463,5 @@ defineExpose({ load })
       </template>
     </template>
 
-    <section class="review-admin" aria-labelledby="review-admin-title">
-      <button
-        v-if="!adminOpen"
-        type="button"
-        class="review-link"
-        data-testid="admin-open"
-        @click="openAdmin"
-      >管理者として見る</button>
-
-      <div v-else class="admin-panel" data-testid="admin-panel">
-        <h3 id="review-admin-title">管理者として見る</h3>
-
-        <form v-if="!devices" class="admin-form" @submit.prevent="submitAdmin">
-          <label for="admin-code">管理者用コード</label>
-          <input
-            id="admin-code"
-            v-model="adminCodeInput"
-            data-testid="admin-code"
-            type="text"
-            autocomplete="off"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            :disabled="adminBusy"
-          />
-          <button type="submit" class="review-button" data-testid="admin-submit" :disabled="adminBusy || !adminCodeInput.trim()">
-            {{ adminBusy ? '確認中…' : '表示する' }}
-          </button>
-        </form>
-
-        <p v-if="adminError" class="review-error" role="alert" data-testid="admin-error">{{ adminError }}</p>
-
-        <ul v-if="devices" class="device-list" data-testid="device-list">
-          <li v-if="devices.length === 0">記録のある端末は、まだありません。</li>
-          <li v-for="device in devices" :key="device.deviceId">
-            <button type="button" class="device-button" :data-device="device.deviceId" @click="viewDevice(device)">
-              <strong>{{ deviceLabel(device) }}</strong>
-              <span>{{ deviceDetail(device) }}</span>
-            </button>
-          </li>
-        </ul>
-      </div>
-    </section>
   </aside>
 </template>

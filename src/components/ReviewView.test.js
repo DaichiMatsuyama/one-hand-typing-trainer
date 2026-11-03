@@ -50,10 +50,22 @@ function mockApi(handlers) {
   })
 }
 
+// テストでは長押しの時間を短くする(本番は appConfig の ADMIN_LONG_PRESS_MS)
+const TEST_PRESS_MS = 5
+
 async function mountReview(fetchImpl, props = {}) {
-  const wrapper = mount(ReviewView, { props: { endpoint: ENDPOINT, access, hand: 'left', fetchImpl, ...props } })
+  const wrapper = mount(ReviewView, {
+    props: { endpoint: ENDPOINT, access, hand: 'left', fetchImpl, adminPressMs: TEST_PRESS_MS, ...props },
+  })
   await flushPromises()
   return wrapper
+}
+
+// 管理者表示の入口は、見出しの長押し
+async function openAdminPanel(wrapper) {
+  await wrapper.get('[data-testid="review-title"]').trigger('pointerdown')
+  await new Promise((resolve) => { setTimeout(resolve, TEST_PRESS_MS * 6) })
+  await flushPromises()
 }
 
 describe('ReviewView(振り返り画面)', () => {
@@ -155,6 +167,42 @@ describe('ReviewView(振り返り画面)', () => {
     expect(wrapper.get('[data-testid="streak"]').text()).toBe('2日')
   })
 
+  describe('管理者表示の入口(画面には何も表示しない)', () => {
+    it('通常の画面に「管理者」の文言やボタンは出さない', async () => {
+      const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }))
+      expect(wrapper.text()).not.toContain('管理者')
+      expect(wrapper.find('[data-testid="admin-open"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="admin-panel"]').exists()).toBe(false)
+    })
+
+    it('見出しを短く押しただけ、または途中で指を離したときは開かない', async () => {
+      const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }))
+      const title = wrapper.get('[data-testid="review-title"]')
+      await title.trigger('pointerdown')
+      await title.trigger('pointerup')
+      await new Promise((resolve) => { setTimeout(resolve, TEST_PRESS_MS * 6) })
+      await title.trigger('pointerdown')
+      await title.trigger('pointerleave')
+      await new Promise((resolve) => { setTimeout(resolve, TEST_PRESS_MS * 6) })
+      expect(wrapper.find('[data-testid="admin-panel"]').exists()).toBe(false)
+    })
+
+    it('見出しを長押しすると管理者用コードの入力欄が出て、閉じるで隠せる', async () => {
+      const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }))
+      await openAdminPanel(wrapper)
+      expect(wrapper.get('[data-testid="admin-panel"]').text()).toContain('管理者用コード')
+      await wrapper.get('[data-testid="admin-close"]').trigger('click')
+      expect(wrapper.find('[data-testid="admin-panel"]').exists()).toBe(false)
+    })
+
+    it('アンマウント後に長押しのタイマーが残らない', async () => {
+      const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }), { adminPressMs: 30 })
+      await wrapper.get('[data-testid="review-title"]').trigger('pointerdown')
+      wrapper.unmount()
+      await new Promise((resolve) => { setTimeout(resolve, 80) })
+    })
+  })
+
   describe('管理者として見る', () => {
     const devices = [
       { deviceId: 'dev-friend-1234567', records: 5, practiceMs: 210_000, firstMs: 0, lastMs: Date.UTC(2026, 10, 3, 3) },
@@ -168,7 +216,7 @@ describe('ReviewView(振り返り画面)', () => {
 
     it('管理者用コードが違うとエラーを出し、端末一覧は出さない・コードも保存しない', async () => {
       const wrapper = await mountReview(api())
-      await wrapper.get('[data-testid="admin-open"]').trigger('click')
+      await openAdminPanel(wrapper)
       await wrapper.get('[data-testid="admin-code"]').setValue('wrong')
       await wrapper.get('[data-testid="admin-panel"] form').trigger('submit')
       await flushPromises()
@@ -180,7 +228,7 @@ describe('ReviewView(振り返り画面)', () => {
     it('正しいコードで端末一覧を出し、友人の端末を選ぶと、その成績と管理者表示になる', async () => {
       const fetchImpl = api()
       const wrapper = await mountReview(fetchImpl)
-      await wrapper.get('[data-testid="admin-open"]').trigger('click')
+      await openAdminPanel(wrapper)
       await wrapper.get('[data-testid="admin-code"]').setValue('adm-ok')
       await wrapper.get('[data-testid="admin-panel"] form').trigger('submit')
       await flushPromises()
@@ -210,13 +258,13 @@ describe('ReviewView(振り返り画面)', () => {
     it('保存済みの管理者用コードがあれば、開くだけで端末一覧を出す。拒否されたら保存を消す', async () => {
       localStorage.setItem(ADMIN_KEY, 'adm-ok')
       const wrapper = await mountReview(api())
-      await wrapper.get('[data-testid="admin-open"]').trigger('click')
+      await openAdminPanel(wrapper)
       await flushPromises()
       expect(wrapper.findAll('.device-button')).toHaveLength(2)
 
       localStorage.setItem(ADMIN_KEY, 'changed')
       const second = await mountReview(api())
-      await second.get('[data-testid="admin-open"]').trigger('click')
+      await openAdminPanel(second)
       await flushPromises()
       expect(second.get('[data-testid="admin-error"]').text()).toContain('管理者用コードが違います')
       expect(localStorage.getItem(ADMIN_KEY)).toBeNull()
@@ -226,7 +274,7 @@ describe('ReviewView(振り返り画面)', () => {
     it('「この端末」を選ぶと、管理者表示にならず自分の成績を出す', async () => {
       localStorage.setItem(ADMIN_KEY, 'adm-ok')
       const wrapper = await mountReview(api())
-      await wrapper.get('[data-testid="admin-open"]').trigger('click')
+      await openAdminPanel(wrapper)
       await flushPromises()
       await wrapper.findAll('.device-button')[1].trigger('click')
       await flushPromises()

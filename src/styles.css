@@ -973,6 +973,9 @@ h1 {
 .review-header h2 {
   margin: 0;
   font-size: 1.4rem;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .review-rotate {
@@ -1230,7 +1233,7 @@ h1 {
 }
 
 .review-admin {
-  margin: 8px 0 24px;
+  margin: 0 0 14px;
   text-align: center;
 }
 
