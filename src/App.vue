@@ -77,6 +77,17 @@ const isStandalone = ref(
   || (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches),
 )
 
+// 縦向きのときは練習画面が隠れる(回転案内/振り返り画面になる)ので、その間は練習時間を止める。
+// 条件は、画面の出し分け(styles.css)と同じ。
+const portraitQuery = typeof window.matchMedia === 'function'
+  ? window.matchMedia('(orientation: portrait) and (max-width: 700px)')
+  : null
+
+// 練習画面が見えていない(アプリが隠れている、または縦向き)
+function isPracticeHidden() {
+  return document.hidden || Boolean(portraitQuery?.matches)
+}
+
 const layout = computed(() => getKeyboardLayout(settings.value.hand, settings.value.layoutVariant))
 const layoutPitchCount = computed(() => (
   getLayoutPitchCount(settings.value.hand, settings.value.layoutVariant)
@@ -147,7 +158,7 @@ function beginQuestion(savedSession = null) {
   session.value = savedSession
     ? restorePracticeSession(savedSession, currentQuestion.value, now.value)
     : createPracticeSession(currentQuestion.value, now.value)
-  if (document.hidden) {
+  if (isPracticeHidden()) {
     session.value = pausePracticeSession(session.value, now.value)
   }
   snapshot()
@@ -235,22 +246,22 @@ function handlePageHide() {
   snapshot(timestamp)
 }
 
-function handleVisibilityChange() {
+// 練習画面が見えるかどうかに合わせて、時間の停止/再開をそろえる
+function syncPauseState() {
   const timestamp = Date.now()
-  session.value = document.hidden
+  session.value = isPracticeHidden()
     ? pausePracticeSession(session.value, timestamp)
     : resumePracticeSession(session.value, timestamp)
   now.value = timestamp
   snapshot(timestamp)
 }
 
+function handleVisibilityChange() {
+  syncPauseState()
+}
+
 function handlePageShow() {
-  const timestamp = Date.now()
-  session.value = document.hidden
-    ? pausePracticeSession(session.value, timestamp)
-    : resumePracticeSession(session.value, timestamp)
-  now.value = timestamp
-  snapshot(timestamp)
+  syncPauseState()
 }
 
 onMounted(() => {
@@ -262,6 +273,10 @@ onMounted(() => {
   timer = setInterval(() => {
     const timestamp = Date.now()
     now.value = timestamp
+    // 向きの変更イベントが届かない環境の保険: 1秒ごとに、見えているかと停止状態のずれを直す
+    if (!session.value.isComplete && isPracticeHidden() !== Boolean(session.value.isPaused)) {
+      syncPauseState()
+    }
     if (!session.value.isPaused && !session.value.isComplete
       && timestamp - lastSnapshotAt >= SNAPSHOT_INTERVAL_MS) {
       snapshot(timestamp)
@@ -270,7 +285,8 @@ onMounted(() => {
   window.addEventListener('pagehide', handlePageHide)
   window.addEventListener('pageshow', handlePageShow)
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  if (document.hidden) handleVisibilityChange()
+  portraitQuery?.addEventListener?.('change', syncPauseState)
+  if (isPracticeHidden()) syncPauseState()
   if (session.value.isComplete) scheduleAutoAdvance()
   stopRemoteSync = remoteSync.start() ?? stopRemoteSync
 })
@@ -284,6 +300,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pagehide', handlePageHide)
   window.removeEventListener('pageshow', handlePageShow)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
+  portraitQuery?.removeEventListener?.('change', syncPauseState)
   displayModeQuery?.removeEventListener?.('change', updateStandaloneStatus)
 })
 </script>
