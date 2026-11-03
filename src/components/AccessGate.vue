@@ -76,7 +76,7 @@ async function submit() {
         </button>
         <p id="gate-error" class="gate-error" role="alert" data-testid="access-error">{{ errorMessage }}</p>
         <p id="gate-privacy" class="gate-note">
-          練習の記録(日時・手・レベル・出題・所要時間・ミスしたキー)が、管理者に送られます。
+          練習情報(日時・手・レベル・出題・所要時間・ミスしたキー)が記録されます。
         </p>
       </form>
     </section>

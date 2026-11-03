@@ -39,7 +39,7 @@ describe('AccessGate', () => {
     expect(input.attributes('autocapitalize')).toBe('off')
     expect(input.attributes('autocorrect')).toBe('off')
     expect(input.attributes('autocomplete')).toBe('off')
-    expect(wrapper.text()).toContain('管理者に送られます')
+    expect(wrapper.text()).toContain('練習情報(日時・手・レベル・出題・所要時間・ミスしたキー)が記録されます')
     expect(wrapper.get('[data-testid="access-submit"]').attributes('disabled')).toBeDefined()
   })
 
