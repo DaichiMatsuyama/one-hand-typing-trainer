@@ -835,3 +835,104 @@ h1 {
     animation: none !important;
   }
 }
+
+/* アクセスゲート(ホーム画面から開く案内・初回コード入力) */
+.access-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    max(16px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  overflow: auto;
+  background:
+    radial-gradient(circle at 15% 10%, rgb(255 205 112 / 22%), transparent 28%),
+    linear-gradient(145deg, #fbf8f0 0%, #eef4f0 100%);
+  color: #303946;
+}
+
+.gate-card {
+  width: min(100%, 460px);
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgb(255 253 248 / 94%);
+  box-shadow: 0 5px 18px rgb(50 56 63 / 8%);
+}
+
+.gate-card h1 {
+  margin: 0 0 8px;
+  font-size: 1.3rem;
+}
+
+.gate-lead {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.gate-steps {
+  margin: 0 0 12px;
+  padding-left: 1.4em;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.gate-note {
+  margin: 10px 0 0;
+  color: #4d5560;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.gate-form {
+  display: grid;
+  gap: 8px;
+}
+
+.gate-label {
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.gate-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 2px solid #8a8f98;
+  border-radius: 10px;
+  background: white;
+  color: #1f2630;
+  /* 16px未満だとiOS Safariが入力時に拡大してしまう */
+  font-size: 1rem;
+}
+
+.gate-button {
+  min-height: 48px;
+  border: 1px solid var(--accent-dark);
+  border-radius: 10px;
+  background: var(--accent);
+  color: white;
+  font-size: 1rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.gate-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.gate-error {
+  min-height: 1.4em;
+  margin: 0;
+  color: #b3261e;
+  font-size: 0.9rem;
+  font-weight: 700;
+}

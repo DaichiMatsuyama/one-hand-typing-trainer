@@ -6,6 +6,8 @@ import PromptView from './components/PromptView.vue'
 import ResultView from './components/ResultView.vue'
 import { AUTO_ADVANCE_MS } from './appConfig.js'
 import { formatDuration, getTotalStats } from './domain/stats.js'
+import { buildCompletionRecord } from './services/completionRecord.js'
+import { remoteSync } from './services/remoteSync.js'
 import { getFinger, getKeyboardLayout, getLayoutPitchCount } from './data/keyboardLayouts.js'
 import { getQuestion } from './data/questionBank.js'
 import {
@@ -26,6 +28,7 @@ import {
 
 const SNAPSHOT_INTERVAL_MS = 5000
 const RESET_NOTICE_MS = 2000
+const MAX_WRONG_KEYS = 50
 
 function createInitialState() {
   try {
@@ -88,6 +91,9 @@ let timer
 let feedbackTimer
 let autoAdvanceTimer
 let noticeTimer
+let stopRemoteSync = () => {}
+// 今の問題で押し間違えた [正しいキー, 押したキー](ページ再読み込みをまたぐと失われる)
+let wrongKeys = []
 let displayModeQuery
 let lastSnapshotAt = Date.now()
 
@@ -106,12 +112,27 @@ function snapshot(timestamp = Date.now()) {
   lastSnapshotAt = timestamp
 }
 
+// 1問クリアごとの練習記録を送信キューへ。送信の成否は練習に影響させない
+function reportCompletion() {
+  try {
+    const sending = remoteSync.recordCompletion(buildCompletionRecord({
+      session: session.value,
+      settings: settings.value,
+      wrongKeys,
+    }))
+    sending?.catch?.(() => {})
+  } catch {
+    // 記録の失敗で練習を止めない
+  }
+}
+
 function cancelAutoAdvance() {
   clearTimeout(autoAdvanceTimer)
   autoAdvanceTimer = undefined
 }
 
 function beginQuestion(savedSession = null) {
+  wrongKeys = []
   cancelAutoAdvance()
   clearTimeout(feedbackTimer)
   feedbackTimer = undefined
@@ -160,10 +181,16 @@ function pressKey(key) {
   if (session.value.isComplete) return
   clearTimeout(feedbackTimer)
   const wasComplete = session.value.isComplete
+  const expectedKey = session.value.question[session.value.position]
+  const pressedKey = String(key).toLowerCase()
+  if (pressedKey !== expectedKey && wrongKeys.length < MAX_WRONG_KEYS) {
+    wrongKeys.push([expectedKey, pressedKey])
+  }
   session.value = submitKey(session.value, key)
   now.value = Date.now()
 
   if (!wasComplete && session.value.isComplete) {
+    reportCompletion()
     results.value = {
       completedQuestions: results.value.completedQuestions + 1,
       correctCount: results.value.correctCount + session.value.correctCount,
@@ -238,9 +265,11 @@ onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
   if (document.hidden) handleVisibilityChange()
   if (session.value.isComplete) scheduleAutoAdvance()
+  stopRemoteSync = remoteSync.start() ?? stopRemoteSync
 })
 
 onBeforeUnmount(() => {
+  stopRemoteSync()
   clearInterval(timer)
   clearTimeout(feedbackTimer)
   clearTimeout(noticeTimer)
