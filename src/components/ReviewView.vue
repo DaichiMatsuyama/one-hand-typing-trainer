@@ -35,6 +35,7 @@ const errorReason = ref('')
 const stats = ref(null)
 const heatHand = ref(props.hand === 'right' ? 'right' : 'left')
 let lastLoadedAt = 0
+let loadGeneration = 0
 
 // 管理者表示
 const adminOpen = ref(false)
@@ -68,23 +69,39 @@ function forgetAdminCode() {
   }
 }
 
+function clearAdminSession(message) {
+  forgetAdminCode()
+  devices.value = null
+  viewing.value = null
+  adminCodeInput.value = ''
+  adminOpen.value = true
+  adminError.value = message
+}
+
 async function load({ force = false } = {}) {
-  if (state.value === 'loading') return
   if (!force && state.value === 'ready' && Date.now() - lastLoadedAt < RELOAD_INTERVAL_MS) return
+  const generation = ++loadGeneration
+  const target = viewing.value ? { ...viewing.value } : null
   state.value = 'loading'
+  errorReason.value = ''
+  // 端末名だけが先に切り替わり、直前の端末の成績が見える状態を作らない。
+  stats.value = null
   const common = { endpoint: props.endpoint, access: props.access, fetchImpl: props.fetchImpl }
-  const result = viewing.value
+  const result = target
     ? await fetchDeviceStats({
       ...common,
       adminCode: readAdminCode(),
-      targetDeviceId: viewing.value.deviceId,
+      targetDeviceId: target.deviceId,
     })
     : await fetchStats(common)
+  const currentTargetId = viewing.value?.deviceId ?? null
+  if (generation !== loadGeneration || currentTargetId !== (target?.deviceId ?? null)) return
   if (result.ok) {
     stats.value = result.stats
     state.value = 'ready'
     lastLoadedAt = Date.now()
   } else {
+    if (result.reason === 'invalid_admin') clearAdminSession(ERROR_TEXT.invalid_admin)
     errorReason.value = result.reason
     state.value = 'error'
   }
@@ -137,8 +154,9 @@ async function loadDevices(code) {
   })
   adminBusy.value = false
   if (!result.ok) {
-    if (result.reason === 'invalid_admin') forgetAdminCode()
-    adminError.value = ERROR_TEXT[result.reason] ?? ERROR_TEXT.server
+    const message = ERROR_TEXT[result.reason] ?? ERROR_TEXT.server
+    if (result.reason === 'invalid_admin') clearAdminSession(message)
+    else adminError.value = message
     return
   }
   saveAdminCode(code)

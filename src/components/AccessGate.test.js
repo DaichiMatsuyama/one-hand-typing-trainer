@@ -23,6 +23,7 @@ describe('AccessGate', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
@@ -73,6 +74,21 @@ describe('AccessGate', () => {
     const wrapper = mount(AccessGate, { props: { mode: 'need-code', endpoint: ENDPOINT } })
     await submitCode(wrapper, 'abc12345')
     expect(wrapper.get('[data-testid="access-error"]').text()).toContain('通信できませんでした')
+    expect(wrapper.emitted('granted')).toBeUndefined()
+  })
+
+  it('確認成功後にコードを保存できなければ、練習画面を開かずエラーを出す', async () => {
+    mockFetch({ ok: true })
+    // jsdomの本物のlocalStorage(Node 22)ではメソッドを差し替えられないため、グローバルごと保存できない代用品にする
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => { throw new Error('blocked') },
+      removeItem: () => {},
+    })
+    const wrapper = mount(AccessGate, { props: { mode: 'need-code', endpoint: ENDPOINT } })
+    await submitCode(wrapper, 'abc12345')
+
+    expect(wrapper.get('[data-testid="access-error"]').text()).toContain('この端末では、コードを保存できませんでした')
     expect(wrapper.emitted('granted')).toBeUndefined()
   })
 

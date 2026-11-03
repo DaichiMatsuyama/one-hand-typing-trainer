@@ -33,10 +33,12 @@ const liveMessage = computed(() => {
 const pressing = ref(false)
 let pressTimer
 let longPressFired = false
+let cancelledPress = false
 
 function startPress(event) {
   if (event.button !== undefined && event.button !== 0) return
   longPressFired = false
+  cancelledPress = false
   pressing.value = true
   clearTimeout(pressTimer)
   pressTimer = setTimeout(() => {
@@ -46,9 +48,16 @@ function startPress(event) {
   }, LONG_PRESS_RESET_MS)
 }
 
-function cancelPress() {
+function endPress() {
   clearTimeout(pressTimer)
   pressing.value = false
+}
+
+function cancelPress() {
+  endPress()
+  // pointerleave/pointercancelの直後にブラウザがclickを生成しても、通常タップにはしない。
+  // 次のpointerdownで解除する。
+  cancelledPress = true
 }
 
 function handleClick() {
@@ -57,6 +66,7 @@ function handleClick() {
     longPressFired = false
     return
   }
+  if (cancelledPress) return
   emit('reset')
 }
 
@@ -89,7 +99,7 @@ onBeforeUnmount(() => clearTimeout(pressTimer))
         data-testid="reset"
         aria-describedby="reset-hint"
         @pointerdown="startPress"
-        @pointerup="cancelPress"
+        @pointerup="endPress"
         @pointercancel="cancelPress"
         @pointerleave="cancelPress"
         @contextmenu.prevent

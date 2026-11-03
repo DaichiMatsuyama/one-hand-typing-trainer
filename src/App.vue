@@ -149,17 +149,17 @@ function cancelAutoAdvance() {
   autoAdvanceTimer = undefined
 }
 
-function beginQuestion(savedSession = null) {
+function beginQuestion(savedSession = null, timestamp = Date.now()) {
   wrongKeys = []
   cancelAutoAdvance()
   clearTimeout(feedbackTimer)
   feedbackTimer = undefined
-  now.value = Date.now()
+  now.value = timestamp
   session.value = savedSession
-    ? restorePracticeSession(savedSession, currentQuestion.value, now.value)
-    : createPracticeSession(currentQuestion.value, now.value)
+    ? restorePracticeSession(savedSession, currentQuestion.value, timestamp)
+    : createPracticeSession(currentQuestion.value, timestamp)
   if (isPracticeHidden()) {
-    session.value = pausePracticeSession(session.value, now.value)
+    session.value = pausePracticeSession(session.value, timestamp)
   }
   snapshot()
 }
@@ -177,10 +177,25 @@ function scheduleAutoAdvance() {
   autoAdvanceTimer = setTimeout(advanceToNextQuestion, AUTO_ADVANCE_MS)
 }
 
+// 未クリアの問題を手動で捨てる前に、画面に出ている進行中の累計をresultsへ移す。
+// クリア済みはpressKey()で移動済みなので対象にしない。
+function preservePendingSession(timestamp = Date.now()) {
+  if (session.value.isComplete) return
+  results.value = {
+    ...results.value,
+    correctCount: results.value.correctCount + session.value.correctCount,
+    mistakes: results.value.mistakes + session.value.mistakes,
+    attempts: results.value.attempts + session.value.attempts,
+    practiceMs: results.value.practiceMs + getElapsedMs(session.value, timestamp),
+  }
+}
+
 function changePractice(nextSettings) {
+  const timestamp = Date.now()
+  preservePendingSession(timestamp)
   settings.value = { ...settings.value, ...nextSettings }
   questionIndex.value = 0
-  beginQuestion()
+  beginQuestion(null, timestamp)
 }
 
 function selectHand(hand) {
@@ -225,7 +240,9 @@ function pressKey(key) {
 }
 
 function resetQuestion() {
-  beginQuestion()
+  const timestamp = Date.now()
+  preservePendingSession(timestamp)
+  beginQuestion(null, timestamp)
 }
 
 // 「やり直す」の長押し: 累計成績もすべてゼロにして、今の問題を最初からやり直す

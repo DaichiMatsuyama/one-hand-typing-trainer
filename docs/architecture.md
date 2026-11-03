@@ -1,5 +1,7 @@
 # アーキテクチャ
 
+> ※一部は古い。2026-11-03以降の決定は `docs/decisions.md`(決定事項1〜)が優先。
+
 ## 初期構成
 - フロントエンド: Vue 3 + Vite。
 - 公開: GitHub Pages (HTTPSの静的ホスティング)。GitHub Actionsによるビルド・デプロイを推奨。

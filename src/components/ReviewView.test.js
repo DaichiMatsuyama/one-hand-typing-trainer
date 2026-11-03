@@ -280,5 +280,62 @@ describe('ReviewView(振り返り画面)', () => {
       await flushPromises()
       expect(wrapper.find('[data-testid="review-viewing"]').exists()).toBe(false)
     })
+
+    it('端末を連続で切り替えても、古い成績を表示せず最後の応答だけを採用する', async () => {
+      const raceDevices = [
+        { ...devices[0], deviceId: 'dev-slow-1234567' },
+        { ...devices[0], deviceId: 'dev-fast-1234567' },
+      ]
+      let releaseSlow
+      const slowResponse = new Promise((resolve) => { releaseSlow = resolve })
+      const fastStats = { ...stats, streak: 9 }
+      const fetchImpl = vi.fn(async (_url, init) => {
+        const body = JSON.parse(init.body)
+        if (body.action === 'stats') return { ok: true, json: async () => ({ ok: true, stats: emptyStats }) }
+        if (body.action === 'admin_devices') return { ok: true, json: async () => ({ ok: true, devices: raceDevices }) }
+        if (body.targetDeviceId === 'dev-slow-1234567') return slowResponse
+        return { ok: true, json: async () => ({ ok: true, stats: fastStats }) }
+      })
+      localStorage.setItem(ADMIN_KEY, 'adm-ok')
+      const wrapper = await mountReview(fetchImpl)
+      await openAdminPanel(wrapper)
+      await flushPromises()
+
+      const buttons = wrapper.findAll('.device-button')
+      await buttons[0].trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('読み込み中')
+      expect(wrapper.find('[data-testid="streak"]').exists()).toBe(false)
+
+      await buttons[1].trigger('click')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="review-viewing"]').text()).toContain('dev-fast')
+      expect(wrapper.get('[data-testid="streak"]').text()).toBe('9日')
+
+      releaseSlow({ ok: true, json: async () => ({ ok: true, stats }) })
+      await flushPromises()
+      expect(wrapper.get('[data-testid="review-viewing"]').text()).toContain('dev-fast')
+      expect(wrapper.get('[data-testid="streak"]').text()).toBe('9日')
+    })
+
+    it('端末成績でinvalid_adminになったら、保存コード・一覧・選択を消して入力欄へ戻す', async () => {
+      localStorage.setItem(ADMIN_KEY, 'adm-ok')
+      const fetchImpl = mockApi({
+        stats: () => ({ ok: true, stats: emptyStats }),
+        admin_devices: () => ({ ok: true, devices }),
+        admin_stats: () => ({ ok: false, error: 'invalid_admin' }),
+      })
+      const wrapper = await mountReview(fetchImpl)
+      await openAdminPanel(wrapper)
+      await flushPromises()
+      await wrapper.findAll('.device-button')[0].trigger('click')
+      await flushPromises()
+
+      expect(localStorage.getItem(ADMIN_KEY)).toBeNull()
+      expect(wrapper.find('[data-testid="device-list"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="review-viewing"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="admin-code"]').exists()).toBe(true)
+      expect(wrapper.get('[data-testid="admin-error"]').text()).toContain('管理者用コードが違います')
+    })
   })
 })

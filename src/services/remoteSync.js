@@ -53,7 +53,8 @@ export function createRemoteSync({
       if (!response.ok) return 'error'
       const data = await response.json()
       if (data?.ok === true) return 'ok'
-      if (data?.error === 'invalid' || data?.error === 'locked') return 'rejected'
+      if (data?.error === 'invalid') return 'rejected'
+      if (data?.error === 'locked') return 'error'
       return 'error'
     } catch {
       return 'error'

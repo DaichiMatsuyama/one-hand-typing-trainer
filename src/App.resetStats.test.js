@@ -59,12 +59,13 @@ describe('累計成績とやり直すボタン', () => {
     wrapper.unmount()
   })
 
-  it('短いタップは今の問題だけやり直し、累計のクリア数は残る', async () => {
+  it('短いタップは今の問題だけやり直し、進行中の時間・ミス・タップ数も累計に残る', async () => {
     const wrapper = mount(App)
     await completeCurrentQuestion(wrapper)
     vi.advanceTimersByTime(AUTO_ADVANCE_MS)
     await wrapper.vm.$nextTick()
     await tapWrongKey(wrapper)
+    vi.advanceTimersByTime(2_500)
 
     const reset = wrapper.get('[data-testid="reset"]')
     await reset.trigger('pointerdown')
@@ -74,6 +75,41 @@ describe('累計成績とやり直すボタン', () => {
 
     expect(wrapper.findAll('.prompt-text .done')).toHaveLength(0)
     expect(stat(wrapper, 'completed')).toBe('1問')
+    expect(stat(wrapper, 'mistakes')).toBe('1')
+    expect(stat(wrapper, 'accuracy')).toBe('50%')
+    expect(stat(wrapper, 'elapsed')).toBe('0:03')
+    wrapper.unmount()
+  })
+
+  it('手・レベル・記号の設定変更でも、進行中の成績を累計へ移す', async () => {
+    const wrapper = mount(App)
+    await tapWrongKey(wrapper)
+    vi.advanceTimersByTime(3_000)
+    await wrapper.get('[data-testid="hand-right"]').trigger('click')
+
+    expect(stat(wrapper, 'mistakes')).toBe('1')
+    expect(stat(wrapper, 'accuracy')).toBe('0%')
+    expect(stat(wrapper, 'elapsed')).toBe('0:03')
+
+    await wrapper.get('[data-testid="level-2"]').trigger('click')
+    await wrapper.get('[data-testid="include-symbols"]').setValue(true)
+    expect(stat(wrapper, 'mistakes')).toBe('1')
+    expect(stat(wrapper, 'accuracy')).toBe('0%')
+    expect(stat(wrapper, 'elapsed')).toBe('0:03')
+    wrapper.unmount()
+  })
+
+  it('手動で移した進行中成績を、次の設定変更で二重加算しない', async () => {
+    const wrapper = mount(App)
+    await tapWrongKey(wrapper)
+    await wrapper.get('[data-testid="reset"]').trigger('click')
+    expect(stat(wrapper, 'mistakes')).toBe('1')
+
+    await wrapper.get('[data-testid="hand-right"]').trigger('click')
+    expect(stat(wrapper, 'mistakes')).toBe('1')
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    expect(saved.results.mistakes).toBe(1)
+    expect(saved.results.attempts).toBe(1)
     wrapper.unmount()
   })
 
@@ -109,7 +145,7 @@ describe('累計成績とやり直すボタン', () => {
     await reset.trigger('pointerdown')
     await reset.trigger('pointerup')
     await reset.trigger('click')
-    expect(stat(wrapper, 'mistakes')).toBe('0')
+    expect(stat(wrapper, 'mistakes')).toBe('1')
     wrapper.unmount()
   })
 
@@ -119,14 +155,27 @@ describe('累計成績とやり直すボタン', () => {
     vi.advanceTimersByTime(AUTO_ADVANCE_MS)
     await wrapper.vm.$nextTick()
 
+    await wrapper.get('[data-testid="level-2"]').trigger('click')
+    const expected = wrapper.get('.prompt-text .current').text()
+    await wrapper.get(`[data-key="${expected}"]`).trigger('click')
+    expect(wrapper.findAll('.prompt-text .done')).toHaveLength(1)
+
     const reset = wrapper.get('[data-testid="reset"]')
     await reset.trigger('pointerdown')
     vi.advanceTimersByTime(LONG_PRESS_RESET_MS / 2)
     await reset.trigger('pointerleave')
     vi.advanceTimersByTime(LONG_PRESS_RESET_MS * 2)
     await wrapper.vm.$nextTick()
+    await reset.trigger('click')
     expect(stat(wrapper, 'completed')).toBe('1問')
+    expect(wrapper.findAll('.prompt-text .done')).toHaveLength(1)
     expect(reset.classes()).not.toContain('pressing')
+
+    // 次のpointerdownでキャンセルフラグが解除され、通常のタップとして使える。
+    await reset.trigger('pointerdown')
+    await reset.trigger('pointerup')
+    await reset.trigger('click')
+    expect(wrapper.findAll('.prompt-text .done')).toHaveLength(0)
     wrapper.unmount()
   })
 

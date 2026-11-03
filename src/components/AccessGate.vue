@@ -19,6 +19,7 @@ const ERROR_MESSAGES = {
   locked: '間違いが続いたため、しばらく入力できません。少し待ってからやり直してください。',
   network: '通信できませんでした。電波のよい場所で、もう一度試してください。',
   server: 'うまく確認できませんでした。しばらくしてからやり直してください。',
+  storage: 'この端末では、コードを保存できませんでした。Safariの設定を確認して、もう一度試してください。',
 }
 
 async function submit() {
@@ -33,7 +34,11 @@ async function submit() {
     errorMessage.value = ERROR_MESSAGES[result.reason] ?? ERROR_MESSAGES.server
     return
   }
-  saveAccess({ granted: true, code: trimmed, deviceId, grantedAt: Date.now() })
+  const saved = saveAccess({ granted: true, code: trimmed, deviceId, grantedAt: Date.now() })
+  if (!saved) {
+    errorMessage.value = ERROR_MESSAGES.storage
+    return
+  }
   emit('granted')
 }
 </script>

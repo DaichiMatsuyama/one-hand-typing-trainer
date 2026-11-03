@@ -83,7 +83,7 @@ describe('App', () => {
     wrapper.unmount()
   })
 
-  it('やり直しで現在位置・ミス・時間をリセットする', async () => {
+  it('やり直しで現在位置をリセットし、ミスと時間は累計に残す', async () => {
     const wrapper = mount(App)
     const expected = wrapper.get('.prompt-text .current').text()
     const wrongKey = expected === 'a' ? 's' : 'a'
@@ -95,8 +95,8 @@ describe('App', () => {
     expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:02')
 
     await wrapper.get('[data-testid="reset"]').trigger('click')
-    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('0')
-    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('1')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:02')
     expect(wrapper.get('.prompt-text .current').exists()).toBe(true)
     wrapper.unmount()
   })
@@ -233,11 +233,11 @@ describe('App', () => {
     restored.unmount()
   })
 
-  it('途中入力後の左右切替・レベル切替で位置・ミス・時間をリセットする', async () => {
+  it('途中入力後の左右切替・レベル切替で位置をリセットし、ミスと時間は累計に残す', async () => {
     const wrapper = mount(App)
     await wrapper.get('[data-testid="level-2"]').trigger('click')
 
-    async function addProgressAndMistake() {
+    async function addProgressAndMistake(expectedMistakes, expectedElapsed) {
       const expected = wrapper.get('.prompt-text .current').text()
       await wrapper.get(`[data-key="${expected}"]`).trigger('click')
       const nextExpected = wrapper.get('.prompt-text .current').text()
@@ -246,21 +246,21 @@ describe('App', () => {
       vi.advanceTimersByTime(2000)
       await wrapper.vm.$nextTick()
       expect(wrapper.findAll('.prompt-text .done')).toHaveLength(1)
-      expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('1')
-      expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:02')
+      expect(wrapper.get('[data-testid="mistakes"]').text()).toBe(String(expectedMistakes))
+      expect(wrapper.get('[data-testid="elapsed"]').text()).toBe(expectedElapsed)
     }
 
-    await addProgressAndMistake()
+    await addProgressAndMistake(1, '0:02')
     await wrapper.get('[data-testid="hand-right"]').trigger('click')
     expect(wrapper.findAll('.prompt-text .done')).toHaveLength(0)
-    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('0')
-    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('1')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:02')
 
-    await addProgressAndMistake()
+    await addProgressAndMistake(2, '0:04')
     await wrapper.get('[data-testid="level-3"]').trigger('click')
     expect(wrapper.findAll('.prompt-text .done')).toHaveLength(0)
-    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('0')
-    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('2')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:04')
     wrapper.unmount()
   })
 

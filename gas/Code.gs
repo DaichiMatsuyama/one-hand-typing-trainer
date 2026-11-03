@@ -20,7 +20,14 @@ var MAX_RECORDS_PER_REQUEST = 50;
 // 間違ったコードが短時間に続いたら、確認を一時的に止める(総当たり対策)
 var MAX_FAILS = 30;
 var FAIL_WINDOW_SECONDS = 300;
-var DEDUPE_SECONDS = 21600;
+var FAILURE_CACHE_KEY = 'fails';
+var LOCK_WAIT_MS = 1000;
+var DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+var RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+var QUESTION_PATTERN = /^[a-z;,./@:_]{1,40}$/;
+var WRONG_KEY_PATTERN = /^[a-z;,./@:_]$/;
+var EARLIEST_RECORD_MS = Date.UTC(2020, 0, 1);
+var MAX_FUTURE_RECORD_MS = 24 * 60 * 60 * 1000;
 
 function doPost(e) {
   var body;
@@ -29,23 +36,22 @@ function doPost(e) {
   } catch (err) {
     return respond_({ ok: false, error: 'bad_request' });
   }
+  if (!isPlainObject_(body)) return respond_({ ok: false, error: 'bad_request' });
 
   var expected = PropertiesService.getScriptProperties().getProperty('ACCESS_CODE');
   if (!expected) return respond_({ ok: false, error: 'not_configured' });
 
   var cache = CacheService.getScriptCache();
-  var fails = Number(cache.get('fails') || 0);
-  if (fails >= MAX_FAILS) return respond_({ ok: false, error: 'locked' });
-
-  if (!safeEqual_(String(body.code || ''), expected)) {
-    cache.put('fails', String(fails + 1), FAIL_WINDOW_SECONDS);
-    return respond_({ ok: false, error: 'invalid' });
-  }
+  var isAdminAction = body.action === 'admin_devices' || body.action === 'admin_stats';
+  // 管理者操作は両方のコードが正しいときだけ成功として失敗回数を消す。
+  // 先にACCESS_CODEだけで消すと、ADMIN_CODEの失敗が1回より増えないため。
+  var accessResult = checkCode_(String(body.code || ''), expected, cache, isAdminAction);
+  if (accessResult) return respond_({ ok: false, error: accessResult });
 
   if (body.action === 'verify') return respond_({ ok: true });
-  if (body.action === 'log') return handleLog_(body, cache);
+  if (body.action === 'log') return handleLog_(body);
   if (body.action === 'stats') {
-    var deviceId = normalizeText_(body.deviceId);
+    var deviceId = validDeviceId_(body.deviceId);
     if (!deviceId) return respond_({ ok: false, error: 'bad_request' });
     return respond_({ ok: true, stats: buildStats_(readRecords_(deviceId), Date.now()) });
   }
@@ -57,16 +63,15 @@ function doPost(e) {
 function handleAdmin_(body, cache) {
   var adminCode = PropertiesService.getScriptProperties().getProperty('ADMIN_CODE');
   if (!adminCode) return respond_({ ok: false, error: 'admin_not_configured' });
-  if (!safeEqual_(String(body.adminCode || ''), adminCode)) {
-    var fails = Number(cache.get('fails') || 0);
-    cache.put('fails', String(fails + 1), FAIL_WINDOW_SECONDS);
-    return respond_({ ok: false, error: 'invalid_admin' });
+  var adminResult = checkCode_(String(body.adminCode || ''), adminCode, cache, false);
+  if (adminResult) {
+    return respond_({ ok: false, error: adminResult === 'invalid' ? 'invalid_admin' : adminResult });
   }
   var records = readRecords_(null);
   if (body.action === 'admin_devices') {
     return respond_({ ok: true, devices: buildDeviceList_(records) });
   }
-  var target = normalizeText_(body.targetDeviceId);
+  var target = validDeviceId_(body.targetDeviceId);
   if (!target) return respond_({ ok: false, error: 'bad_request' });
   return respond_({
     ok: true,
@@ -74,46 +79,145 @@ function handleAdmin_(body, cache) {
   });
 }
 
-function handleLog_(body, cache) {
-  var records = Array.isArray(body.records) ? body.records.slice(0, MAX_RECORDS_PER_REQUEST) : [];
-  var deviceId = text_(body.deviceId, 64);
-  var rows = [];
+function handleLog_(body) {
+  var deviceId = validDeviceId_(body.deviceId);
+  if (!deviceId) return respond_({ ok: false, error: 'bad_request' });
+
+  var sourceRecords = Array.isArray(body.records) ? body.records : [];
+  var records = sourceRecords.slice(0, MAX_RECORDS_PER_REQUEST);
+  var rejected = Math.max(0, sourceRecords.length - MAX_RECORDS_PER_REQUEST);
+  var candidates = [];
 
   records.forEach(function (record) {
-    if (!record || typeof record !== 'object') return;
-    var id = text_(record.id, 64);
-    if (!id || cache.get('rec_' + id)) return; // 再送された記録は二重に入れない
-    rows.push([
-      new Date(),
-      id,
-      text_(record.ts, 40),
-      deviceId,
-      text_(record.hand, 8),
-      number_(record.level, 0, 3),
-      record.includeSymbols === true,
-      text_(record.layout, 8),
-      text_(record.question, 40),
-      number_(record.durationMs, 0, 86400000),
-      number_(record.attempts, 0, 100000),
-      number_(record.mistakes, 0, 100000),
-      text_(JSON.stringify(Array.isArray(record.wrong) ? record.wrong.slice(0, 50) : []), 600),
-    ]);
+    var normalized = normalizeRecord_(record);
+    if (!normalized) {
+      rejected += 1;
+      return;
+    }
+    candidates.push(normalized);
   });
 
-  if (rows.length > 0) {
+  var rows = [];
+  if (candidates.length > 0) {
     var lock = LockService.getScriptLock();
     lock.waitLock(10000);
     try {
       var sheet = getSheet_();
-      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, HEADERS.length).setValues(rows);
+      var lastRow = sheet.getLastRow();
+      var existingIds = new Set();
+      if (lastRow >= 2) {
+        sheet.getRange(2, 2, lastRow - 1, 1).getValues().forEach(function (row) {
+          existingIds.add(normalizeText_(row[0]));
+        });
+      }
+      candidates.forEach(function (record) {
+        if (existingIds.has(record.id)) return;
+        existingIds.add(record.id); // 同一バッチ内の重複もここで除く
+        rows.push([
+          new Date(), record.id, text_(record.ts, 40), deviceId, record.hand, record.level,
+          record.includeSymbols, record.layout, text_(record.question, 40),
+          record.durationMs, record.attempts, record.mistakes,
+          text_(JSON.stringify(record.wrong), 600),
+        ]);
+      });
+      if (rows.length > 0) {
+        sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, HEADERS.length).setValues(rows);
+      }
     } finally {
       lock.releaseLock();
     }
-    rows.forEach(function (row) {
-      cache.put('rec_' + row[1], '1', DEDUPE_SECONDS);
-    });
   }
-  return respond_({ ok: true, saved: rows.length });
+  return respond_({ ok: true, saved: rows.length, rejected: rejected });
+}
+
+function isPlainObject_(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.prototype.toString.call(value) === '[object Object]';
+}
+
+function validDeviceId_(value) {
+  return typeof value === 'string' && DEVICE_ID_PATTERN.test(value) ? value : '';
+}
+
+function isIntegerInRange_(value, min, max) {
+  return typeof value === 'number' && isFinite(value) && Math.floor(value) === value
+    && value >= min && value <= max;
+}
+
+function normalizeRecord_(record) {
+  if (!isPlainObject_(record)) return null;
+  if (typeof record.id !== 'string' || !RECORD_ID_PATTERN.test(record.id)) return null;
+  if (typeof record.ts !== 'string') return null;
+  var timestamp = Date.parse(record.ts);
+  if (!isFinite(timestamp) || timestamp < EARLIEST_RECORD_MS || timestamp > Date.now() + MAX_FUTURE_RECORD_MS) return null;
+  if (record.hand !== 'left' && record.hand !== 'right') return null;
+  if (!isIntegerInRange_(record.level, 1, 3)) return null;
+  if (record.layout !== 'jis' && record.layout !== 'us') return null;
+  if (typeof record.includeSymbols !== 'boolean') return null;
+  if (typeof record.question !== 'string' || !QUESTION_PATTERN.test(record.question)) return null;
+  if (typeof record.durationMs !== 'number' || !isFinite(record.durationMs)
+    || record.durationMs < 0 || record.durationMs > 86400000) return null;
+  if (!isIntegerInRange_(record.attempts, 0, 100000)) return null;
+  if (!isIntegerInRange_(record.mistakes, 0, record.attempts)) return null;
+  if (!Array.isArray(record.wrong) || record.wrong.length > 50) return null;
+
+  var wrong = record.wrong.filter(function (pair) {
+    return Array.isArray(pair) && pair.length === 2
+      && typeof pair[0] === 'string' && WRONG_KEY_PATTERN.test(pair[0])
+      && typeof pair[1] === 'string' && WRONG_KEY_PATTERN.test(pair[1]);
+  });
+  return {
+    id: record.id,
+    ts: record.ts,
+    hand: record.hand,
+    level: record.level,
+    includeSymbols: record.includeSymbols,
+    layout: record.layout,
+    question: record.question,
+    durationMs: record.durationMs,
+    attempts: record.attempts,
+    mistakes: record.mistakes,
+    wrong: wrong,
+  };
+}
+
+// 固定ウィンドウの失敗回数を、短時間だけスクリプトロックで保護する。
+// ロックを取れない場合は、並行リクエストによる回数制限のすり抜けを避けるため安全側でlockedにする。
+function checkCode_(provided, expected, cache, deferReset) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(LOCK_WAIT_MS)) return 'locked';
+  try {
+    var now = Date.now();
+    var state = readFailureState_(cache, now);
+    if (state.count >= MAX_FAILS) return 'locked';
+    if (!safeEqual_(provided, expected)) {
+      if (state.count === 0) state.start = now;
+      state.count += 1;
+      var remainingMs = FAIL_WINDOW_SECONDS * 1000 - (now - state.start);
+      cache.put(FAILURE_CACHE_KEY, JSON.stringify(state), Math.max(1, Math.ceil(remainingMs / 1000)));
+      return 'invalid';
+    }
+    if (!deferReset) cache.remove(FAILURE_CACHE_KEY);
+    return '';
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function readFailureState_(cache, now) {
+  var state = null;
+  try {
+    state = JSON.parse(cache.get(FAILURE_CACHE_KEY) || 'null');
+  } catch (err) {
+    state = null;
+  }
+  if (!state || !isIntegerInRange_(state.count, 0, MAX_FAILS + 100000)
+    || typeof state.start !== 'number' || !isFinite(state.start)
+    || now - state.start >= FAIL_WINDOW_SECONDS * 1000 || state.start > now) {
+    cache.remove(FAILURE_CACHE_KEY);
+    return { count: 0, start: now };
+  }
+  return state;
 }
 
 function getSheet_() {
@@ -132,12 +236,6 @@ function getSheet_() {
 function text_(value, maxLength) {
   var s = String(value === undefined || value === null ? '' : value).slice(0, maxLength);
   return /^[=+\-@]/.test(s) ? "'" + s : s;
-}
-
-function number_(value, min, max) {
-  var n = Number(value);
-  if (!isFinite(n)) return 0;
-  return Math.min(max, Math.max(min, Math.round(n)));
 }
 
 function safeEqual_(a, b) {

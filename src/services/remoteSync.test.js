@@ -92,6 +92,20 @@ describe('remoteSync', () => {
     expect(loadOutbox(storage).map((r) => r.id)).toEqual(['a', 'b'])
   })
 
+  it('lockedは一時エラーとしてキューを残し、次の契機で再送する', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: false, error: 'locked' }) })
+      .mockResolvedValue(ok())
+    const { sync, storage } = setup({ fetchImpl })
+
+    await sync.recordCompletion(rec('a'))
+    expect(loadOutbox(storage).map((r) => r.id)).toEqual(['a'])
+    await sync.flushPending()
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(loadOutbox(storage)).toEqual([])
+  })
+
   it('キューは最大件数で古いものから捨てる', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new TypeError('offline'))
     const { sync, storage } = setup({ fetchImpl })
