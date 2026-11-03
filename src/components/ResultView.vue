@@ -27,7 +27,7 @@ const liveMessage = computed(() => {
 </script>
 
 <template>
-  <section class="result-bar" aria-label="練習結果">
+  <section class="result-bar" :class="{ complete: isComplete }" aria-label="練習結果">
     <dl class="stats">
       <div><dt>時間</dt><dd data-testid="elapsed">{{ elapsedText }}</dd></div>
       <div><dt>正答率</dt><dd>{{ accuracy }}%</dd></div>

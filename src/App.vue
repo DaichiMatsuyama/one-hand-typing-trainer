@@ -60,6 +60,10 @@ const questionOptions = computed(() => ({ ...settings.value }))
 const currentQuestion = computed(() => getQuestion(questionOptions.value, questionIndex.value))
 const session = ref(initialState.session)
 const now = ref(Date.now())
+const isStandalone = ref(
+  Boolean(window.navigator.standalone)
+  || (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches),
+)
 
 const layout = computed(() => getKeyboardLayout(settings.value.hand, settings.value.layoutVariant))
 const nextKey = computed(() => session.value.question[session.value.position] ?? '')
@@ -80,7 +84,13 @@ const accuracy = computed(() => getAccuracy(session.value))
 
 let timer
 let feedbackTimer
+let displayModeQuery
 let lastSnapshotAt = Date.now()
+
+function updateStandaloneStatus() {
+  isStandalone.value = Boolean(window.navigator.standalone)
+    || Boolean(displayModeQuery?.matches)
+}
 
 function snapshot(timestamp = Date.now()) {
   saveAppState({
@@ -176,6 +186,11 @@ function handlePageShow() {
 }
 
 onMounted(() => {
+  if (typeof window.matchMedia === 'function') {
+    displayModeQuery = window.matchMedia('(display-mode: standalone)')
+    displayModeQuery.addEventListener?.('change', updateStandaloneStatus)
+  }
+  updateStandaloneStatus()
   timer = setInterval(() => {
     const timestamp = Date.now()
     now.value = timestamp
@@ -196,58 +211,77 @@ onBeforeUnmount(() => {
   window.removeEventListener('pagehide', handlePageHide)
   window.removeEventListener('pageshow', handlePageShow)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
+  displayModeQuery?.removeEventListener?.('change', updateStandaloneStatus)
 })
 </script>
 
 <template>
-  <div class="app-shell">
-    <header class="top-bar">
-      <div>
-        <p class="brand-kicker">キー位置を片手ずつ覚える</p>
-        <h1>片手タイピング</h1>
-      </div>
+  <div class="app-shell" :data-hand="settings.hand">
+    <main class="practice-layout">
+      <section class="info-strip" data-testid="info-strip" aria-label="練習内容と設定">
+        <header class="compact-header">
+          <div class="brand">
+            <p class="brand-kicker">キー位置を片手ずつ覚える</p>
+            <h1>片手タイピング</h1>
+          </div>
 
-      <fieldset class="segmented hand-selector" aria-label="練習する手">
-        <legend class="visually-hidden">練習する手</legend>
-        <button
-          v-for="hand in ['left', 'right']"
-          :key="hand"
-          type="button"
-          :class="{ selected: settings.hand === hand }"
-          :aria-pressed="settings.hand === hand"
-          :data-testid="`hand-${hand}`"
-          @click="selectHand(hand)"
-        >
-          {{ hand === 'left' ? '左手' : '右手' }}
-        </button>
-      </fieldset>
+          <div class="control-stack">
+            <fieldset class="segmented hand-selector" aria-label="練習する手">
+              <legend class="visually-hidden">練習する手</legend>
+              <button
+                v-for="hand in ['left', 'right']"
+                :key="hand"
+                type="button"
+                :class="{ selected: settings.hand === hand }"
+                :aria-pressed="settings.hand === hand"
+                :data-testid="`hand-${hand}`"
+                @click="selectHand(hand)"
+              >
+                {{ hand === 'left' ? '左手' : '右手' }}
+              </button>
+            </fieldset>
 
-      <LevelSelector :model-value="settings.level" @update:model-value="selectLevel" />
+            <LevelSelector :model-value="settings.level" @update:model-value="selectLevel" />
 
-      <label class="symbol-toggle">
-        <input
-          type="checkbox"
-          :checked="settings.includeSymbols"
-          :disabled="settings.hand === 'left'"
-          :aria-describedby="settings.hand === 'left' ? 'symbol-hand-hint' : undefined"
-          data-testid="include-symbols"
-          @change="toggleSymbols"
+            <label class="symbol-toggle">
+              <input
+                type="checkbox"
+                :checked="settings.includeSymbols"
+                :disabled="settings.hand === 'left'"
+                aria-label="記号を含める"
+                :aria-describedby="settings.hand === 'left' ? 'symbol-hand-hint' : undefined"
+                data-testid="include-symbols"
+                @change="toggleSymbols"
+              />
+              <span class="symbol-label">
+                記号
+                <small v-if="settings.hand === 'left'" id="symbol-hand-hint">右手のみ</small>
+              </span>
+            </label>
+          </div>
+        </header>
+
+        <PromptView
+          :question="session.question"
+          :position="session.position"
+          :hand="settings.hand"
+          :layout-variant="settings.layoutVariant"
+          :is-complete="session.isComplete"
         />
-        <span class="symbol-label">
-          記号を含める
-          <small v-if="settings.hand === 'left'" id="symbol-hand-hint">右手のみ</small>
-        </span>
-      </label>
-    </header>
 
-    <main>
-      <PromptView
-        :question="session.question"
-        :position="session.position"
-        :hand="settings.hand"
-        :layout-variant="settings.layoutVariant"
-        :is-complete="session.isComplete"
-      />
+        <ResultView
+          :elapsed-text="elapsedText"
+          :accuracy="accuracy"
+          :mistakes="session.mistakes"
+          :is-complete="session.isComplete"
+          :feedback="session.feedback"
+          :next-key="nextKey"
+          :next-finger="nextFinger"
+          :completed-questions="results.completedQuestions"
+          @next="nextQuestion"
+          @reset="resetQuestion"
+        />
+      </section>
 
       <KeyboardView
         :layout="layout"
@@ -256,19 +290,6 @@ onBeforeUnmount(() => {
         :disabled="session.isComplete"
         @press="pressKey"
       />
-
-      <ResultView
-        :elapsed-text="elapsedText"
-        :accuracy="accuracy"
-        :mistakes="session.mistakes"
-        :is-complete="session.isComplete"
-        :feedback="session.feedback"
-        :next-key="nextKey"
-        :next-finger="nextFinger"
-        :completed-questions="results.completedQuestions"
-        @next="nextQuestion"
-        @reset="resetQuestion"
-      />
     </main>
   </div>
 
@@ -276,5 +297,8 @@ onBeforeUnmount(() => {
     <div class="phone-icon" aria-hidden="true">↻</div>
     <h2 id="rotate-title">iPhoneを横向きにしてください</h2>
     <p>横画面にすると、キーを大きく表示できます。</p>
+    <p v-if="!isStandalone" class="install-hint" data-testid="install-hint">
+      全画面で使うには 共有 → ホーム画面に追加
+    </p>
   </aside>
 </template>

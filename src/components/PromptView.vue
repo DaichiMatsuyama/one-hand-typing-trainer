@@ -21,7 +21,9 @@ const nextFinger = computed(() => {
   <section class="prompt-card" aria-labelledby="prompt-title">
     <div class="prompt-heading">
       <p id="prompt-title" class="eyebrow">この順番でタップ</p>
-      <p v-if="!isComplete" class="finger-hint">次は {{ nextFinger }}</p>
+      <p v-if="!isComplete" class="finger-hint" :aria-label="`次は${nextFinger}`">
+        {{ nextFinger }}
+      </p>
     </div>
     <p class="prompt-text" :aria-label="`問題 ${question}、${position}文字入力済み`">
       <span

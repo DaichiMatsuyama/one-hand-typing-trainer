@@ -32,38 +32,44 @@ function keyAriaLabel(item) {
 </script>
 
 <template>
-  <section class="keyboard-panel" :aria-label="`${layout.label}のキーボード`">
-    <div class="keyboard" data-testid="keyboard">
-      <div
-        v-for="row in layout.rows"
-        :key="row.id"
-        class="keyboard-row"
-        :style="{ '--row-offset': row.offset }"
-      >
-        <button
-          v-for="item in row.keys"
-          :key="item.value"
-          type="button"
-          class="key"
-          :class="keyClass(item)"
-          :disabled="disabled"
-          :aria-label="keyAriaLabel(item)"
-          :aria-current="item.value === nextKey && !disabled ? 'true' : undefined"
-          :data-key="item.value"
-          @click="emit('press', item.value)"
+  <section
+    class="keyboard-panel"
+    :data-hand="layout.hand"
+    :aria-label="`${layout.label}のキーボード`"
+  >
+    <div class="keyboard-stage">
+      <div class="keyboard" data-testid="keyboard">
+        <div
+          v-for="row in layout.rows"
+          :key="row.id"
+          class="keyboard-row"
+          :style="{ '--row-offset': row.offset }"
         >
-          <span class="key-character">{{ item.value }}</span>
-          <span class="finger-label" aria-hidden="true">{{ getFinger(item.finger).shortLabel }}</span>
-          <span v-if="item.isHome" class="home-bump" aria-hidden="true"></span>
-        </button>
+          <button
+            v-for="item in row.keys"
+            :key="item.value"
+            type="button"
+            class="key"
+            :class="keyClass(item)"
+            :disabled="disabled"
+            :aria-label="keyAriaLabel(item)"
+            :aria-current="item.value === nextKey && !disabled ? 'true' : undefined"
+            :data-key="item.value"
+            @click="emit('press', item.value)"
+          >
+            <span class="key-character">{{ item.value }}</span>
+            <span class="finger-label" aria-hidden="true">{{ getFinger(item.finger).shortLabel }}</span>
+            <span v-if="item.isHome" class="home-bump" aria-hidden="true"></span>
+          </button>
+        </div>
       </div>
-    </div>
 
-    <div class="finger-legend" aria-label="指の色分け凡例">
-      <span v-for="finger in legend" :key="finger.id" class="legend-item">
-        <span class="legend-swatch" :class="`finger-${finger.id}`" aria-hidden="true"></span>
-        {{ finger.label }}
-      </span>
+      <div class="finger-legend" aria-label="指の色分け凡例">
+        <span v-for="finger in legend" :key="finger.id" class="legend-item">
+          <span class="legend-swatch" :class="`finger-${finger.id}`" aria-hidden="true"></span>
+          {{ finger.label }}
+        </span>
+      </div>
     </div>
   </section>
 </template>

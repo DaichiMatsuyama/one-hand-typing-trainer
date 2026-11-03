@@ -9,6 +9,7 @@ describe('App', () => {
     vi.useFakeTimers()
     vi.setSystemTime(100_000)
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    Object.defineProperty(window.navigator, 'standalone', { configurable: true, value: false })
   })
 
   afterEach(() => {
@@ -24,6 +25,37 @@ describe('App', () => {
     expect(wrapper.find('[data-key="a"]').exists()).toBe(false)
     expect(wrapper.find('[data-key="j"]').exists()).toBe(true)
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).settings.hand).toBe('right')
+    wrapper.unmount()
+  })
+
+  it('手を切り替えても情報ストリップを上部に保ち、キーボードだけ手側へ寄せる', async () => {
+    const wrapper = mount(App)
+    const shell = wrapper.get('.app-shell')
+    const children = [...wrapper.get('.practice-layout').element.children]
+
+    expect(shell.attributes('data-hand')).toBe('left')
+    expect(shell.classes()).not.toContain('hand-left')
+    expect(children[0].classList.contains('info-strip')).toBe(true)
+    expect(children[1].classList.contains('keyboard-panel')).toBe(true)
+    expect(wrapper.get('[data-testid="info-strip"]').find('.hand-selector').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="info-strip"]').find('.level-selector').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="info-strip"]').find('.prompt-card').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="info-strip"]').find('.stats').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="info-strip"]').find('[data-testid="reset"]').exists()).toBe(true)
+    expect(wrapper.get('.keyboard-panel').attributes('data-hand')).toBe('left')
+
+    await wrapper.get('[data-testid="hand-right"]').trigger('click')
+    expect(shell.attributes('data-hand')).toBe('right')
+    expect(shell.classes()).not.toContain('hand-right')
+    expect(wrapper.get('.keyboard-panel').attributes('data-hand')).toBe('right')
+    expect(wrapper.get('.practice-layout').element.children[0].classList.contains('info-strip')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('ホーム画面からの起動時は回転案内の追加方法を表示しない', () => {
+    Object.defineProperty(window.navigator, 'standalone', { configurable: true, value: true })
+    const wrapper = mount(App)
+    expect(wrapper.find('[data-testid="install-hint"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
