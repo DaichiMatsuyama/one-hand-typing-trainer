@@ -48,7 +48,7 @@ Viteの開発サーバーを同一ネットワーク上のiPhoneから確認す�
 node scripts/generate-icons.mjs
 ```
 
-生成物は `public/icons/icon-180.png` と `public/icons/icon-512.png` です。
+生成物は通常表示用の `public/icons/icon-180.png` / `public/icons/icon-512.png` と、キー外形を中央80%の安全円内に収めたmaskable用の `public/icons/icon-maskable-512.png` です。manifestでは通常用（`purpose: any`）とmaskable用（`purpose: maskable`）を別エントリにしています。
 
 ## GitHub Pagesへのデプロイ
 

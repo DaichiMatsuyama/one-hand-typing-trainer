@@ -18,7 +18,7 @@ const nextFinger = computed(() => {
 </script>
 
 <template>
-  <section class="prompt-card" aria-labelledby="prompt-title">
+  <section class="prompt-card" :class="{ complete: isComplete }" aria-labelledby="prompt-title">
     <div class="prompt-heading">
       <p id="prompt-title" class="eyebrow">この順番でタップ</p>
       <p v-if="!isComplete" class="finger-hint" :aria-label="`次は${nextFinger}`">

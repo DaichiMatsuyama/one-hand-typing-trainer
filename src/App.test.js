@@ -112,6 +112,10 @@ describe('App', () => {
     const symbolSetting = wrapper.get('[data-testid="include-symbols"]')
     expect(symbolSetting.element.disabled).toBe(true)
     expect(wrapper.get('.symbol-toggle').text()).toContain('右手のみ')
+    expect(symbolSetting.attributes('aria-describedby')).toBe('symbol-hand-hint')
+    expect(symbolSetting.attributes('title')).toContain('右手の練習でのみ')
+    expect(wrapper.get('.symbol-label-full').text()).toBe('記号を含める')
+    expect(wrapper.get('.symbol-label-compact').text()).toBe('記号')
 
     await wrapper.get('[data-testid="hand-right"]').trigger('click')
     expect(symbolSetting.element.disabled).toBe(false)
@@ -120,6 +124,33 @@ describe('App', () => {
     await wrapper.get('[data-testid="hand-left"]').trigger('click')
     expect(symbolSetting.element.disabled).toBe(true)
     expect(symbolSetting.element.checked).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('正誤のキー色を約450ms保持し、最終文字の正解も解除する', async () => {
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="level-2"]').trigger('click')
+    const expected = wrapper.get('.prompt-text .current').text()
+    const wrongKey = wrapper.findAll('.key')
+      .find((keyWrapper) => keyWrapper.attributes('data-key') !== expected)
+
+    await wrongKey.trigger('click')
+    expect(wrongKey.classes()).toContain('incorrect')
+    vi.advanceTimersByTime(449)
+    await wrapper.vm.$nextTick()
+    expect(wrongKey.classes()).toContain('incorrect')
+    vi.advanceTimersByTime(1)
+    await wrapper.vm.$nextTick()
+    expect(wrongKey.classes()).not.toContain('incorrect')
+
+    while (!wrapper.find('.info-strip.complete').exists()) {
+      const next = wrapper.get('.prompt-text .current').text()
+      await wrapper.get(`[data-key="${next}"]`).trigger('click')
+    }
+    expect(wrapper.find('.key.correct').exists()).toBe(true)
+    vi.advanceTimersByTime(450)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.key.correct').exists()).toBe(false)
     wrapper.unmount()
   })
 

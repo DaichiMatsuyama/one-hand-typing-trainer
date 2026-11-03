@@ -73,25 +73,59 @@ input:focus-visible {
 .app-shell {
   --info-strip-height: 48px;
   --layout-gap: 2px;
+  --info-strip-border-inline: 2px;
+  --keyboard-panel-border-block: 2px;
+  --key-shadow-depth: 4px;
+  --key-pitch-min: 49px;
+  --key-pitch-max: 115px;
+  --key-gap-min: 4px;
+  --key-gap-max: 8px;
+  --shell-inline-min: 6px;
+  --shell-block-min: 5px;
+  --strip-controls-width: 288px;
+  --strip-compact-controls-width: 272px;
+  --strip-prompt-min: 186px;
+  --strip-complete-prompt-min: 143px;
+  --strip-stats-width: 182px;
+  --strip-compact-stats-width: 112px;
+  --strip-action-width: 50px;
+  --strip-grid-gap: 3px;
+  --strip-inline-padding: 2px;
+  --strip-result-gap: 3px;
+  --strip-action-gap: 3px;
+  --strip-compact-grid-gap: 2px;
+  --strip-compact-inline-padding: 1px;
+  --strip-compact-result-gap: 1px;
   --key-pitch-height: calc(
-    (100dvh - max(5px, env(safe-area-inset-top)) - max(5px, env(safe-area-inset-bottom))
-    - var(--info-strip-height) - var(--layout-gap)) / 3
+    (100dvh - max(var(--shell-block-min), env(safe-area-inset-top))
+    - max(var(--shell-block-min), env(safe-area-inset-bottom))
+    - var(--info-strip-height) - var(--layout-gap)
+    - var(--keyboard-panel-border-block) - var(--key-shadow-depth)) / 3
   );
   --key-pitch-width: calc(
-    (100vw - max(6px, env(safe-area-inset-left)) - max(6px, env(safe-area-inset-right))) / 5.75
+    (100vw - max(var(--shell-inline-min), env(safe-area-inset-left))
+    - max(var(--shell-inline-min), env(safe-area-inset-right))) / 5.75
   );
   /* 115px ≒ iPhone上の19mm。幅か高さが足りない場合だけ縮小する。 */
-  --key-pitch: clamp(49px, min(var(--key-pitch-height), var(--key-pitch-width)), 115px);
-  --key-gap: clamp(4px, calc(var(--key-pitch) * 0.065), 8px);
+  --key-pitch: clamp(
+    var(--key-pitch-min),
+    min(var(--key-pitch-height), var(--key-pitch-width)),
+    var(--key-pitch-max)
+  );
+  --key-gap: clamp(
+    var(--key-gap-min),
+    calc(var(--key-pitch) * 0.065),
+    var(--key-gap-max)
+  );
   --key-size: calc(var(--key-pitch) - var(--key-gap));
   width: 100%;
   height: 100dvh;
   min-height: 100dvh;
   padding:
-    max(5px, env(safe-area-inset-top))
-    max(6px, env(safe-area-inset-right))
-    max(5px, env(safe-area-inset-bottom))
-    max(6px, env(safe-area-inset-left));
+    max(var(--shell-block-min), env(safe-area-inset-top))
+    max(var(--shell-inline-min), env(safe-area-inset-right))
+    max(var(--shell-block-min), env(safe-area-inset-bottom))
+    max(var(--shell-inline-min), env(safe-area-inset-left));
   overflow: hidden;
 }
 
@@ -106,6 +140,8 @@ input:focus-visible {
     "strip"
     "keyboard";
   gap: var(--layout-gap);
+  container-name: practice;
+  container-type: inline-size;
 }
 
 .info-strip {
@@ -113,16 +149,20 @@ input:focus-visible {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: max-content minmax(186px, 1fr) max-content;
+  grid-template-columns: max-content minmax(var(--strip-prompt-min), 1fr) max-content;
   align-items: center;
-  gap: 4px;
+  gap: var(--strip-grid-gap);
   height: var(--info-strip-height);
-  padding: 0 3px;
+  padding: 0 var(--strip-inline-padding);
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: rgb(255 253 248 / 94%);
   box-shadow: 0 3px 12px rgb(50 56 63 / 8%);
+}
+
+.info-strip.complete {
+  grid-template-columns: max-content minmax(var(--strip-complete-prompt-min), 1fr) max-content;
 }
 
 .compact-header {
@@ -148,6 +188,7 @@ h1 {
 
 .control-stack {
   display: flex;
+  width: var(--strip-controls-width);
   min-width: 0;
   align-items: center;
   gap: 3px;
@@ -220,6 +261,15 @@ h1 {
   line-height: 1.05;
 }
 
+.symbol-label-full {
+  display: flex;
+  flex-direction: column;
+}
+
+.symbol-label-compact {
+  display: none;
+}
+
 .symbol-label small {
   font-size: 0.55rem;
   font-weight: 750;
@@ -234,6 +284,10 @@ h1 {
   justify-content: center;
   gap: 4px;
   overflow: hidden;
+}
+
+.prompt-card.complete {
+  gap: 0;
 }
 
 .prompt-heading {
@@ -306,12 +360,13 @@ h1 {
   min-height: 44px;
   align-items: center;
   justify-content: flex-end;
-  gap: 3px;
+  gap: var(--strip-result-gap);
   overflow: hidden;
 }
 
 .stats {
   display: grid;
+  width: var(--strip-stats-width);
   flex: 0 0 auto;
   grid-template-columns: repeat(4, minmax(29px, auto));
   margin: 0;
@@ -360,17 +415,19 @@ h1 {
   display: flex;
   flex: 0 0 auto;
   justify-content: center;
-  gap: 3px;
+  gap: var(--strip-action-gap);
 }
 
 .primary-button,
 .secondary-button {
+  width: var(--strip-action-width);
   min-width: 44px;
   min-height: 44px;
-  padding: 2px 4px;
+  padding: 2px;
   border-radius: 9px;
   font-size: 0.66rem;
   font-weight: 800;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -441,7 +498,7 @@ h1 {
   border: 2px solid rgb(38 46 57 / 42%);
   border-radius: clamp(10px, calc(var(--key-pitch) * 0.14), 16px);
   color: #1b222b;
-  box-shadow: 0 4px 0 rgb(49 56 65 / 25%);
+  box-shadow: 0 var(--key-shadow-depth) 0 rgb(49 56 65 / 25%);
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
@@ -506,10 +563,14 @@ h1 {
 
 .key.expected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgb(20 108 104 / 18%), 0 4px 0 rgb(49 56 65 / 25%);
+  box-shadow:
+    0 0 0 3px rgb(20 108 104 / 18%),
+    0 var(--key-shadow-depth) 0 rgb(49 56 65 / 25%);
 }
 
 .key.correct {
+  border-color: var(--accent);
+  background: #74d5ad;
   animation: correct-flash 400ms ease-out;
 }
 
@@ -560,7 +621,50 @@ h1 {
   75% { transform: translateX(-2px); }
 }
 
-@media (orientation: landscape) and (max-width: 700px) {
+@container practice (max-width: 732px) {
+  .info-strip {
+    gap: var(--strip-compact-grid-gap);
+    padding-inline: var(--strip-compact-inline-padding);
+  }
+
+  .control-stack {
+    width: var(--strip-compact-controls-width);
+    gap: 1px;
+  }
+
+  .symbol-label-full {
+    display: none;
+  }
+
+  .symbol-label-compact {
+    display: inline;
+  }
+
+  .symbol-label small {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .result-bar {
+    gap: var(--strip-compact-result-gap);
+  }
+
+  .stats {
+    width: var(--strip-compact-stats-width);
+    grid-template-columns: repeat(3, minmax(29px, auto));
+  }
+
+  .stats div:last-child {
+    display: none;
+  }
+
   .result-bar.complete .stats {
     display: none;
   }
@@ -641,5 +745,17 @@ h1 {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+
+  .key.correct {
+    border-color: var(--accent-dark);
+    background: #62cf9f;
+    animation: none !important;
+  }
+
+  .key.incorrect {
+    border-color: var(--danger);
+    background: #ff9fa7;
+    animation: none !important;
   }
 }

@@ -34,13 +34,17 @@ function inRoundedRectangle(x, y, left, top, right, bottom, radius) {
   return dx * dx + dy * dy <= radius * radius
 }
 
-function createIcon(size) {
+function createIcon(size, { maskable = false } = {}) {
   const pixels = Buffer.alloc(size * (size * 4 + 1))
-  const keyLeft = Math.round(size * 0.17)
-  const keyTop = Math.round(size * 0.15)
-  const keyRight = Math.round(size * 0.83)
-  const keyBottom = Math.round(size * 0.85)
-  const radius = Math.round(size * 0.1)
+  // maskable版はキー外形全体を中央80%の安全円（半径40%）内に収める。
+  const keyBounds = maskable
+    ? { left: 0.24, top: 0.22, right: 0.76, bottom: 0.78, radius: 0.08 }
+    : { left: 0.17, top: 0.15, right: 0.83, bottom: 0.85, radius: 0.1 }
+  const keyLeft = Math.round(size * keyBounds.left)
+  const keyTop = Math.round(size * keyBounds.top)
+  const keyRight = Math.round(size * keyBounds.right)
+  const keyBottom = Math.round(size * keyBounds.bottom)
+  const radius = Math.round(size * keyBounds.radius)
   const border = Math.max(3, Math.round(size * 0.025))
 
   function paint(x, y, red, green, blue, alpha = 255) {
@@ -103,6 +107,13 @@ function createIcon(size) {
 }
 
 mkdirSync(outputDirectory, { recursive: true })
-for (const size of [180, 512]) {
-  writeFileSync(resolve(outputDirectory, `icon-${size}.png`), createIcon(size))
+for (const icon of [
+  { filename: 'icon-180.png', size: 180 },
+  { filename: 'icon-512.png', size: 512 },
+  { filename: 'icon-maskable-512.png', size: 512, maskable: true },
+]) {
+  writeFileSync(
+    resolve(outputDirectory, icon.filename),
+    createIcon(icon.size, { maskable: icon.maskable }),
+  )
 }

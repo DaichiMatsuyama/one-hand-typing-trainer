@@ -143,11 +143,10 @@ function pressKey(key) {
       attempts: results.value.attempts + session.value.attempts,
       practiceMs: results.value.practiceMs + session.value.elapsedMs,
     }
-  } else {
-    feedbackTimer = setTimeout(() => {
-      session.value = { ...session.value, feedback: null }
-    }, 450)
   }
+  feedbackTimer = setTimeout(() => {
+    session.value = { ...session.value, feedback: null }
+  }, 450)
   snapshot()
 }
 
@@ -218,7 +217,12 @@ onBeforeUnmount(() => {
 <template>
   <div class="app-shell" :data-hand="settings.hand">
     <main class="practice-layout">
-      <section class="info-strip" data-testid="info-strip" aria-label="練習内容と設定">
+      <section
+        class="info-strip"
+        :class="{ complete: session.isComplete }"
+        data-testid="info-strip"
+        aria-label="練習内容と設定"
+      >
         <header class="compact-header">
           <div class="brand">
             <p class="brand-kicker">キー位置を片手ずつ覚える</p>
@@ -250,11 +254,15 @@ onBeforeUnmount(() => {
                 :disabled="settings.hand === 'left'"
                 aria-label="記号を含める"
                 :aria-describedby="settings.hand === 'left' ? 'symbol-hand-hint' : undefined"
+                :title="settings.hand === 'left' ? '記号は右手の練習でのみ出題できます' : '記号を問題に含める'"
                 data-testid="include-symbols"
                 @change="toggleSymbols"
               />
               <span class="symbol-label">
-                記号
+                <span class="symbol-label-full" aria-hidden="true">
+                  <span>記号を</span><span>含める</span>
+                </span>
+                <span class="symbol-label-compact" aria-hidden="true">記号</span>
                 <small v-if="settings.hand === 'left'" id="symbol-hand-hint">右手のみ</small>
               </span>
             </label>

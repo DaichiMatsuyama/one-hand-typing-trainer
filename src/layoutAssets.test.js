@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import {
   LANDSCAPE_LAYOUT,
@@ -8,9 +9,41 @@ import {
 } from './layoutMetrics.js'
 
 const styles = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
+const indexHtml = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8')
 const manifest = JSON.parse(
   readFileSync(resolve(process.cwd(), 'public/manifest.webmanifest'), 'utf8'),
 )
+
+function cssPxVariable(name) {
+  const match = styles.match(new RegExp(`--${name}:\\s*([0-9.]+)px`))
+  if (!match) throw new Error(`CSS変数 --${name} が見つかりません`)
+  return Number(match[1])
+}
+
+function cssNumber(pattern, label) {
+  const match = styles.match(pattern)
+  if (!match) throw new Error(`${label} がCSSから読み取れません`)
+  return Number(match[1])
+}
+
+function readGeneratedPngPixels(buffer) {
+  const idatChunks = []
+  let offset = 8
+  let width
+  let height
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset)
+    const type = buffer.toString('ascii', offset + 4, offset + 8)
+    const data = buffer.subarray(offset + 8, offset + 8 + length)
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0)
+      height = data.readUInt32BE(4)
+    }
+    if (type === 'IDAT') idatChunks.push(data)
+    offset += length + 12
+  }
+  return { width, height, pixels: inflateSync(Buffer.concat(idatChunks)) }
+}
 
 function contrastRatio(foreground, background) {
   const luminance = (color) => {
@@ -27,23 +60,69 @@ function contrastRatio(foreground, background) {
 }
 
 describe('実機向けレイアウト', () => {
-  it('キーのピッチを高さ・幅の小さい方から求め、115pxを上限にする', () => {
-    expect(styles).toContain('--key-pitch-height:')
-    expect(styles).toContain('--key-pitch-width:')
-    expect(styles).toMatch(
-      /--key-pitch:\s*clamp\(49px,\s*min\(var\(--key-pitch-height\),\s*var\(--key-pitch-width\)\),\s*115px\)/,
-    )
-    expect(styles).toContain('--key-size: calc(var(--key-pitch) - var(--key-gap))')
-    expect(styles).toContain('margin-left: calc(var(--row-offset) * var(--key-pitch))')
-    expect(styles).toContain(`--info-strip-height: ${LANDSCAPE_LAYOUT.infoStripHeight}px`)
-    expect(styles).toContain(`--layout-gap: ${LANDSCAPE_LAYOUT.layoutGap}px`)
-    expect(styles).toContain('- var(--info-strip-height) - var(--layout-gap)) / 3')
-    expect(styles).not.toContain('grid-template-areas: "keyboard info"')
+  it('CSSで実際に使う固定値をlayoutMetrics.jsと一致させる', () => {
+    const cssValues = {
+      infoStripHeight: cssPxVariable('info-strip-height'),
+      layoutGap: cssPxVariable('layout-gap'),
+      infoStripBorderInline: cssPxVariable('info-strip-border-inline'),
+      keyboardPanelBorderBlock: cssPxVariable('keyboard-panel-border-block'),
+      keyShadowDepth: cssPxVariable('key-shadow-depth'),
+      keyPitchMin: cssPxVariable('key-pitch-min'),
+      keyPitchMax: cssPxVariable('key-pitch-max'),
+      keyGapMin: cssPxVariable('key-gap-min'),
+      keyGapMax: cssPxVariable('key-gap-max'),
+      shellInlineMin: cssPxVariable('shell-inline-min'),
+      shellBlockMin: cssPxVariable('shell-block-min'),
+      stripControlsWidth: cssPxVariable('strip-controls-width'),
+      stripCompactControlsWidth: cssPxVariable('strip-compact-controls-width'),
+      stripPromptMinimumWidth: cssPxVariable('strip-prompt-min'),
+      stripCompletePromptMinimumWidth: cssPxVariable('strip-complete-prompt-min'),
+      stripStatsWidth: cssPxVariable('strip-stats-width'),
+      stripCompactStatsWidth: cssPxVariable('strip-compact-stats-width'),
+      stripActionWidth: cssPxVariable('strip-action-width'),
+      stripGridGap: cssPxVariable('strip-grid-gap'),
+      stripInlinePadding: cssPxVariable('strip-inline-padding'),
+      stripResultGap: cssPxVariable('strip-result-gap'),
+      stripActionGap: cssPxVariable('strip-action-gap'),
+      stripCompactGridGap: cssPxVariable('strip-compact-grid-gap'),
+      stripCompactInlinePadding: cssPxVariable('strip-compact-inline-padding'),
+      stripCompactResultGap: cssPxVariable('strip-compact-result-gap'),
+      compactBreakpoint: cssNumber(
+        /@container\s+practice\s*\(max-width:\s*([0-9.]+)px\)/,
+        'コンパクト表示の境界',
+      ),
+      keyboardPitchCount: cssNumber(
+        /--key-pitch-width:[\s\S]*?\/\s*([0-9.]+)\s*\n\s*\);/,
+        '幅方向のキーピッチ数',
+      ),
+      keyGapRatio: cssNumber(
+        /calc\(var\(--key-pitch\)\s*\*\s*([0-9.]+)\)/,
+        'キー間隔の比率',
+      ),
+    }
+
+    expect(cssValues).toEqual(Object.fromEntries(
+      Object.keys(cssValues).map((key) => [key, LANDSCAPE_LAYOUT[key]]),
+    ))
+    expect(styles).toContain('minmax(var(--strip-prompt-min), 1fr)')
+    expect(styles).toContain('minmax(var(--strip-complete-prompt-min), 1fr)')
+    expect(styles).toMatch(/\.prompt-card\.complete\s*\{\s*gap:\s*0/)
+    expect(styles).toContain('width: var(--strip-controls-width)')
+    expect(styles).toContain('width: var(--strip-stats-width)')
+    expect(styles).toContain('width: var(--strip-action-width)')
+    expect(styles).toContain('- var(--keyboard-panel-border-block) - var(--key-shadow-depth)) / 3')
+    expect(styles).toContain('0 var(--key-shadow-depth) 0')
+    expect(styles).toMatch(/\.info-strip\s*\{[\s\S]*?border:\s*1px solid/)
+    expect(styles).toMatch(/\.keyboard-panel\s*\{[\s\S]*?border:\s*1px solid/)
+    expect(cssPxVariable('info-strip-border-inline')).toBe(2 * 1)
+    expect(cssPxVariable('keyboard-panel-border-block')).toBe(2 * 1)
   })
 
   it('情報ストリップを常に上部、キーボードを残りの領域に配置する', () => {
     expect(styles).toMatch(/grid-template-areas:\s*"strip"\s*"keyboard"/)
-    expect(styles).toContain('grid-template-columns: max-content minmax(186px, 1fr) max-content')
+    expect(styles).not.toContain('grid-template-areas: "keyboard info"')
+    expect(styles).toContain('container-name: practice')
+    expect(styles).toContain('container-type: inline-size')
   })
 
   const landscapeCases = [
@@ -57,7 +136,9 @@ describe('実機向けレイアウト', () => {
     '%s（%dx%d）でストリップ・キー・凡例が収まり、44px以上のタップ領域になる',
     (_name, width, height, safeArea) => {
       const metrics = calculateLandscapeLayout({ width, height, safeArea })
-      expect(metrics.keyPitch).toBeLessThanOrEqual(115)
+      expect(metrics.keyPitch).toBeLessThanOrEqual(LANDSCAPE_LAYOUT.keyPitchMax)
+      expect(metrics.normalStripWidth).toBeLessThanOrEqual(metrics.stripClientWidth)
+      expect(metrics.completeStripWidth).toBeLessThanOrEqual(metrics.stripClientWidth)
       expect(metrics.stripFits).toBe(true)
       expect(metrics.legendFits).toBe(true)
       expect(metrics.noHorizontalScroll).toBe(true)
@@ -69,7 +150,20 @@ describe('実機向けレイアウト', () => {
     },
   )
 
-  it('852x393とsafe-area左右59・下21の算出値を固定する', () => {
+  it('667x375はclientWidth 653px相当のコンパクト表示で通常・クリア状態とも収まる', () => {
+    const metrics = calculateLandscapeLayout({ width: 667, height: 375 })
+
+    expect(metrics.availableWidth).toBe(655)
+    expect(metrics.stripClientWidth).toBe(653)
+    expect(metrics.isCompact).toBe(true)
+    expect(metrics.normalStripWidth).toBe(627)
+    expect(metrics.completeStripWidth).toBe(524)
+    expect(metrics.requiredStripWidth).toBeLessThanOrEqual(metrics.stripClientWidth)
+    expect(styles).toMatch(/@container\s+practice[\s\S]*?\.stats div:last-child\s*\{\s*display:\s*none/)
+    expect(styles).toMatch(/@container\s+practice[\s\S]*?\.result-bar\.complete \.stats\s*\{\s*display:\s*none/)
+  })
+
+  it('852x393とsafe-area左右59・下21では通常表示を保ち、影まで高さ内に収める', () => {
     const metrics = calculateLandscapeLayout({
       width: 852,
       height: 393,
@@ -77,12 +171,17 @@ describe('実機向けレイアウト', () => {
     })
 
     expect(metrics.availableWidth).toBe(734)
+    expect(metrics.stripClientWidth).toBe(732)
+    expect(metrics.isCompact).toBe(false)
     expect(metrics.availableHeight).toBe(367)
     expect(metrics.keyboardAreaHeight).toBe(317)
-    expect(metrics.heightPitch).toBeCloseTo(105.67, 2)
+    expect(metrics.keyboardContentHeight).toBe(315)
+    expect(metrics.keyboardHeightBudget).toBe(311)
+    expect(metrics.heightPitch).toBeCloseTo(103.67, 2)
     expect(metrics.widthPitch).toBeCloseTo(127.65, 2)
-    expect(metrics.keyPitch).toBeCloseTo(105.67, 2)
-    expect(metrics.keySize).toBeCloseTo(98.8, 2)
+    expect(metrics.keyPitch).toBeCloseTo(103.67, 2)
+    expect(metrics.keySize).toBeCloseTo(96.93, 2)
+    expect(metrics.keyboardVisualHeight).toBeLessThanOrEqual(metrics.keyboardContentHeight)
     expect(metrics.legendWidth).toBeGreaterThanOrEqual(LANDSCAPE_LAYOUT.legendMinimumWidth)
   })
 
@@ -101,31 +200,76 @@ describe('実機向けレイアウト', () => {
     const promptWidth = estimatePromptWidth(10)
     expect(promptWidth.questionWidth).toBeCloseTo(142.24, 2)
     expect(promptWidth.withFingerHint).toBeCloseTo(186.24, 2)
-    expect(styles).toContain('grid-template-columns: max-content minmax(186px, 1fr) max-content')
     expect(styles).toMatch(/\.prompt-text \{[\s\S]*font-size:\s*20px/)
     expect(styles).toMatch(/\.prompt-text \{[\s\S]*white-space:\s*nowrap/)
     expect(styles).toMatch(/\.prompt-text \.current \{[\s\S]*font-size:\s*clamp\(1\.7rem/)
     expect(contrastRatio('303946', 'fffdf8')).toBeGreaterThanOrEqual(4.5)
     expect(contrastRatio('657080', 'fffdf8')).toBeGreaterThanOrEqual(4.5)
   })
+
+  it('reduced motionでも正誤を約450ms保持する背景色で示す', () => {
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.key\.correct[\s\S]*?background:\s*#62cf9f[\s\S]*?animation:\s*none/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.key\.incorrect[\s\S]*?background:\s*#ff9fa7[\s\S]*?animation:\s*none/)
+  })
 })
 
 describe('ホーム画面用アセット', () => {
-  it('GitHub Pagesのbaseから解決できる相対manifestを持つ', () => {
+  it('明るいテーマと整合するデフォルトのiOSステータスバーを使う', () => {
+    expect(indexHtml).toContain('<meta name="theme-color" content="#f7f3ea" />')
+    expect(indexHtml).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default" />')
+    expect(manifest.theme_color).toBe('#f7f3ea')
+    expect(manifest.background_color).toBe('#f7f3ea')
+  })
+
+  it('GitHub Pagesのbaseから解決できる相対manifestと用途別アイコンを持つ', () => {
     expect(manifest.start_url).toBe('./')
     expect(manifest.scope).toBe('./')
     expect(manifest.display).toBe('standalone')
     expect(manifest.orientation).toBe('landscape')
-    expect(manifest.icons.map((icon) => icon.src)).toEqual([
-      'icons/icon-180.png',
-      'icons/icon-512.png',
+    expect(manifest.icons.map(({ src, purpose }) => ({ src, purpose }))).toEqual([
+      { src: 'icons/icon-180.png', purpose: 'any' },
+      { src: 'icons/icon-512.png', purpose: 'any' },
+      { src: 'icons/icon-maskable-512.png', purpose: 'maskable' },
     ])
   })
 
-  it.each([180, 512])('%dpxのPNGアイコンが正しい寸法で存在する', (size) => {
-    const icon = readFileSync(resolve(process.cwd(), `public/icons/icon-${size}.png`))
+  it.each([
+    ['icon-180.png', 180],
+    ['icon-512.png', 512],
+    ['icon-maskable-512.png', 512],
+  ])('%sが正しい寸法のPNGとして存在する', (filename, size) => {
+    const icon = readFileSync(resolve(process.cwd(), `public/icons/${filename}`))
     expect([...icon.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
     expect(icon.readUInt32BE(16)).toBe(size)
     expect(icon.readUInt32BE(20)).toBe(size)
+  })
+
+  it('maskable用は通常用と異なる安全領域向け画像にする', () => {
+    const regular = readFileSync(resolve(process.cwd(), 'public/icons/icon-512.png'))
+    const maskable = readFileSync(resolve(process.cwd(), 'public/icons/icon-maskable-512.png'))
+    expect(maskable.equals(regular)).toBe(false)
+  })
+
+  it('maskable用のキー外形を中央80%の安全円内に収める', () => {
+    const icon = readFileSync(resolve(process.cwd(), 'public/icons/icon-maskable-512.png'))
+    const { width, height, pixels } = readGeneratedPngPixels(icon)
+    const stride = width * 4 + 1
+    const center = (width - 1) / 2
+    const safeRadius = width * 0.4
+    let maximumDistance = 0
+
+    for (let y = 0; y < height; y += 1) {
+      expect(pixels[y * stride]).toBe(0)
+      for (let x = 0; x < width; x += 1) {
+        const pixelOffset = y * stride + 1 + x * 4
+        const isBackground = pixels[pixelOffset] === 20
+          && pixels[pixelOffset + 1] === 108
+          && pixels[pixelOffset + 2] === 104
+        if (!isBackground) {
+          maximumDistance = Math.max(maximumDistance, Math.hypot(x - center, y - center))
+        }
+      }
+    }
+    expect(maximumDistance).toBeLessThanOrEqual(safeRadius)
   })
 })
