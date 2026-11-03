@@ -5,6 +5,12 @@ export const LANDSCAPE_LAYOUT = Object.freeze({
   layoutGap: 2,
   infoStripBorderInline: 2,
   keyboardPanelBorderBlock: 2,
+  keyboardPanelBorderInline: 2,
+  // キーボードの外側の縁(左手は左、右手は右)と枠との間の余白。キーの大きさは変えず、幅の計算にだけ含める。
+  // 幅の狭い画面では、凡例の幅を守るため余白を小さくする。
+  keyboardPanelPaddingInline: 12,
+  keyboardPanelPaddingInlineNarrow: 4,
+  narrowViewportMax: 760,
   keyShadowDepth: 4,
   keyPitchMin: 49,
   keyPitchMax: 115,
@@ -85,7 +91,14 @@ export function calculateLandscapeLayout({
   const keyboardContentHeight = keyboardAreaHeight - config.keyboardPanelBorderBlock
   const keyboardHeightBudget = keyboardContentHeight - config.keyShadowDepth
   const keyboardPitchCount = getLayoutPitchCount(hand, layoutVariant)
-  const widthPitch = availableWidth / keyboardPitchCount
+  // キーボードの幅 = 個数 × pitch - gap(gap ≒ pitch × 比率)。枠の線と、外側の縁の余白を除いた幅に収める。
+  const panelPadding = width <= config.narrowViewportMax
+    ? config.keyboardPanelPaddingInlineNarrow
+    : config.keyboardPanelPaddingInline
+  const keyboardInnerWidth = availableWidth
+    - config.keyboardPanelBorderInline
+    - panelPadding
+  const widthPitch = keyboardInnerWidth / (keyboardPitchCount - config.keyGapRatio)
   const heightPitch = keyboardHeightBudget / 3
   const keyPitch = clamp(
     config.keyPitchMin,
@@ -103,7 +116,7 @@ export function calculateLandscapeLayout({
   const keyboardVisualHeight = keyboardHeight + config.keyShadowDepth
   const legendWidth = hand === 'right'
     ? 0.75 * keyPitch - keyGap
-    : availableWidth - keyboardWidth
+    : keyboardInnerWidth - keyboardWidth
   const stripClientWidth = availableWidth - config.infoStripBorderInline
   const isCompact = availableWidth <= config.compactBreakpoint
   const controlsWidth = isCompact

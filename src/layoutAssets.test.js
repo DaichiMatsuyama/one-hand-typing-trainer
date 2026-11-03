@@ -67,6 +67,13 @@ describe('実機向けレイアウト', () => {
       layoutGap: cssPxVariable('layout-gap'),
       infoStripBorderInline: cssPxVariable('info-strip-border-inline'),
       keyboardPanelBorderBlock: cssPxVariable('keyboard-panel-border-block'),
+      keyboardPanelBorderInline: cssPxVariable('keyboard-panel-border-inline'),
+      keyboardPanelPaddingInline: cssPxVariable('keyboard-panel-padding-inline'),
+      keyboardPanelPaddingInlineNarrow: cssPxVariable('keyboard-panel-padding-inline-narrow'),
+      narrowViewportMax: cssNumber(
+        /@media\s*\(max-width:\s*([0-9.]+)px\)\s*\{\s*\.app-shell\s*\{\s*--keyboard-panel-padding-inline/,
+        '余白を小さくする画面幅',
+      ),
       keyShadowDepth: cssPxVariable('key-shadow-depth'),
       keyPitchMin: cssPxVariable('key-pitch-min'),
       keyPitchMax: cssPxVariable('key-pitch-max'),
@@ -102,7 +109,9 @@ describe('実機向けレイアウト', () => {
     expect(cssNumber(/--keyboard-pitch-count:\s*([0-9.]+)/, '既定のキーピッチ数')).toBe(
       getLayoutPitchCount('left', 'jis'),
     )
-    expect(styles).toContain('/ var(--keyboard-pitch-count)')
+    // 幅基準の式: (幅 - 枠の線 - 外側の余白) / (列数 - gapの比率)
+    expect(styles).toContain('- var(--keyboard-panel-border-inline) - var(--keyboard-panel-padding-inline))')
+    expect(styles).toContain('/ (var(--keyboard-pitch-count) - 0.065)')
     expect(styles).toContain('var(--key-pitch) * var(--keyboard-pitch-count)')
     expect(styles).toContain('minmax(var(--strip-prompt-min), 1fr)')
     expect(styles).toMatch(/\.prompt-card\.complete\s*\{\s*gap:\s*0/)
@@ -175,11 +184,35 @@ describe('実機向けレイアウト', () => {
     })
 
     expect(metrics.keyboardPitchCount).toBe(6.75)
-    expect(metrics.widthPitch).toBeCloseTo(metrics.availableWidth / 6.75, 5)
+    const padding = width <= LANDSCAPE_LAYOUT.narrowViewportMax
+      ? LANDSCAPE_LAYOUT.keyboardPanelPaddingInlineNarrow
+      : LANDSCAPE_LAYOUT.keyboardPanelPaddingInline
+    expect(metrics.widthPitch).toBeCloseTo((metrics.availableWidth - 2 - padding) / (6.75 - 0.065), 5)
     expect(metrics.keyboardWidth).toBeLessThanOrEqual(metrics.availableWidth)
     expect(metrics.legendFits).toBe(true)
     expect(metrics.noHorizontalScroll).toBe(true)
     expect(metrics.hasMinimumTapTarget).toBe(true)
+  })
+
+  it.each(['left', 'right'])('852x393(iPhone 16)の%s手: キーの大きさは余白をつける前と同じで、外側の縁に12px以上の余白がある', (hand) => {
+    const metrics = calculateLandscapeLayout({
+      width: 852,
+      height: 393,
+      safeArea: { left: 59, right: 59, bottom: 21 },
+      hand,
+    })
+    // 高さ基準が先に上限になるため、幅の余白を足してもキーは縮まない(余白をつける前と同じ103.67)
+    expect(metrics.keyPitch).toBeCloseTo(103.67, 2)
+    expect(metrics.heightPitch).toBeLessThanOrEqual(metrics.widthPitch)
+    // 枠の内側の幅(734 - 線2px)から、キーボードの幅を引いた余りが、外側の余白12px以上
+    const slack = metrics.availableWidth - 2 - metrics.keyboardWidth
+    expect(slack).toBeGreaterThanOrEqual(LANDSCAPE_LAYOUT.keyboardPanelPaddingInline)
+  })
+
+  it('幅の狭い画面(667pt)では余白を4pxに抑え、左手の凡例の幅を守る', () => {
+    const metrics = calculateLandscapeLayout({ width: 667, height: 375, hand: 'left' })
+    expect(metrics.legendFits).toBe(true)
+    expect(metrics.legendWidth).toBeGreaterThanOrEqual(LANDSCAPE_LAYOUT.legendMinimumWidth)
   })
 
   it('左手とUS右手は5.75ピッチのままにする', () => {
@@ -208,7 +241,7 @@ describe('実機向けレイアウト', () => {
     expect(metrics.keyboardContentHeight).toBe(315)
     expect(metrics.keyboardHeightBudget).toBe(311)
     expect(metrics.heightPitch).toBeCloseTo(103.67, 2)
-    expect(metrics.widthPitch).toBeCloseTo(127.65, 2)
+    expect(metrics.widthPitch).toBeCloseTo(((734 - 2 - 12) / (5.75 - 0.065)), 2)
     expect(metrics.keyboardPitchCount).toBe(5.75)
     expect(metrics.keyPitch).toBeCloseTo(103.67, 2)
     expect(metrics.keySize).toBeCloseTo(96.93, 2)
