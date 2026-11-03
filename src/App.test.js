@@ -409,7 +409,12 @@ describe('App', () => {
     await completeCurrentQuestion(wrapper)
     expect(vi.getTimerCount()).toBeGreaterThan(0)
     wrapper.unmount()
-    expect(vi.getTimerCount()).toBe(0)
+    // jsdomのlocalStorageはsetItemごとに0msタイマーを作る(Nodeの版で有無が変わる)ため、
+    // タイマー総数ではなく「アンマウント後に時間が進んでも自動遷移・保存が走らない」ことを検証する。
+    const savedAfterUnmount = localStorage.getItem(STORAGE_KEY)
+    vi.advanceTimersByTime(AUTO_ADVANCE_MS * 10)
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(savedAfterUnmount)
+    expect(JSON.parse(savedAfterUnmount).questionIndex).toBe(0)
   })
 
   it('JIS右手の記号キーへ読みやすいVoiceOver名と6.75ピッチを設定する', async () => {
