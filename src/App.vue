@@ -4,8 +4,11 @@ import KeyboardView from './components/KeyboardView.vue'
 import LevelSelector from './components/LevelSelector.vue'
 import PromptView from './components/PromptView.vue'
 import ResultView from './components/ResultView.vue'
+import ReviewView from './components/ReviewView.vue'
 import { AUTO_ADVANCE_MS } from './appConfig.js'
 import { formatDuration, getTotalStats } from './domain/stats.js'
+import { REMOTE_ENDPOINT } from './remoteConfig.js'
+import { loadAccess } from './services/access.js'
 import { buildCompletionRecord } from './services/completionRecord.js'
 import { remoteSync } from './services/remoteSync.js'
 import { getFinger, getKeyboardLayout, getLayoutPitchCount } from './data/keyboardLayouts.js'
@@ -60,6 +63,10 @@ const initialState = createInitialState()
 const settings = ref(initialState.settings)
 const results = ref(initialState.results)
 const questionIndex = ref(initialState.questionIndex)
+
+// 縦向きの振り返り画面は、送信先が設定され、コード入力済みの端末だけで使える(それ以外は従来の回転案内)
+const reviewAccess = REMOTE_ENDPOINT ? loadAccess() : null
+const reviewEnabled = Boolean(reviewAccess)
 
 const questionOptions = computed(() => ({ ...settings.value }))
 const currentQuestion = computed(() => getQuestion(questionOptions.value, questionIndex.value))
@@ -374,7 +381,13 @@ onBeforeUnmount(() => {
     </main>
   </div>
 
-  <aside class="rotate-notice" role="status" aria-live="polite" aria-labelledby="rotate-title">
+  <ReviewView
+    v-if="reviewEnabled"
+    :endpoint="REMOTE_ENDPOINT"
+    :access="reviewAccess"
+    :hand="settings.hand"
+  />
+  <aside v-else class="rotate-notice" role="status" aria-live="polite" aria-labelledby="rotate-title">
     <div class="phone-icon" aria-hidden="true">↻</div>
     <h2 id="rotate-title">iPhoneを横向きにしてください</h2>
     <p>横画面にすると、キーを大きく表示できます。</p>

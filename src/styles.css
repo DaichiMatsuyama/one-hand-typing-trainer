@@ -936,3 +936,364 @@ h1 {
   font-size: 0.9rem;
   font-weight: 700;
 }
+
+/* 振り返り画面(縦向きのとき、練習画面の代わりに表示する) */
+.review-screen {
+  display: none;
+}
+
+@media (orientation: portrait) and (max-width: 700px) {
+  .review-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding:
+      max(14px, env(safe-area-inset-top))
+      max(14px, env(safe-area-inset-right))
+      max(24px, env(safe-area-inset-bottom))
+      max(14px, env(safe-area-inset-left));
+    color: var(--ink);
+    background: #f7f3ea;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+.review-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+
+.review-header h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.review-rotate {
+  margin: 0;
+  color: #4d5560;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.review-section {
+  margin: 0 0 14px;
+  padding: 12px 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgb(255 253 248 / 94%);
+}
+
+.review-section h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.review-message {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgb(255 253 248 / 94%);
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.review-message p {
+  margin: 0 0 8px;
+}
+
+.review-viewing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  background: #e5f1ef;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.review-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 0;
+}
+
+.review-cards div {
+  padding: 8px 4px;
+  border-radius: 10px;
+  background: #eef4f0;
+  text-align: center;
+}
+
+.review-cards dt {
+  color: #4d5560;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.review-cards dd {
+  margin: 4px 0 0;
+  font-size: 1.05rem;
+  font-weight: 850;
+}
+
+.review-total,
+.review-note {
+  margin: 8px 0 0;
+  color: #4d5560;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.review-note strong {
+  color: var(--ink);
+}
+
+.review-tabs {
+  display: inline-flex;
+  margin-bottom: 10px;
+  overflow: hidden;
+  border: 1px solid #aaa296;
+  border-radius: 10px;
+}
+
+.review-tabs button {
+  min-width: 72px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  background: white;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.review-tabs button.selected {
+  background: var(--accent);
+  color: white;
+}
+
+/* キーのヒートマップ */
+.heatmap {
+  --hk: min(54px, calc((100vw - 64px) / 6.75));
+  --hg: 6px;
+  display: grid;
+  gap: var(--hg);
+  margin-bottom: 8px;
+}
+
+.heat-row {
+  display: flex;
+  gap: var(--hg);
+  margin-left: calc(var(--row-offset) * (var(--hk) + var(--hg)));
+}
+
+.heat-key {
+  display: grid;
+  width: var(--hk);
+  height: calc(var(--hk) * 0.92);
+  flex: 0 0 auto;
+  place-items: center;
+  align-content: center;
+  border: 1px solid #b9b3a6;
+  border-radius: 9px;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.heat-char {
+  font-size: 1.1rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.heat-rate {
+  min-height: 0.8rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.heat-none { border-style: dashed; background: #e7e3da; color: #4d5560; }
+.heat-clean { border-color: #7fb594; background: #cfe9d9; }
+.heat-l1 { border-color: #d9b774; background: #fbe6bd; }
+.heat-l2 { border-color: #d9955a; background: #f7c08c; }
+.heat-l3 { border-color: #b9573b; background: #ec8b66; }
+.heat-l4 { border-color: #7d1a14; background: #b3261e; color: white; }
+
+.heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  color: #4d5560;
+  font-size: 0.75rem;
+  list-style: none;
+}
+
+.heat-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 1px solid #b9b3a6;
+  border-radius: 4px;
+}
+
+/* グラフ(SVG) */
+.review-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.review-chart .axis { stroke: #8a8f98; stroke-width: 1; }
+.review-chart .grid { stroke: #d6d1c6; stroke-width: 1; stroke-dasharray: 3 3; }
+.review-chart .bar { fill: var(--accent); }
+.review-chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.review-chart .dot { fill: white; stroke: var(--accent); stroke-width: 2; }
+.review-chart .tick { fill: #4d5560; font-size: 9px; }
+.review-chart .value { fill: #222733; font-size: 9px; font-weight: 700; }
+
+.confusions {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.confusions li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #eef4f0;
+  font-size: 0.9rem;
+}
+
+.confusions .count {
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+/* ボタン・管理者表示 */
+.review-button,
+.device-button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--accent-dark);
+  border-radius: 10px;
+  background: var(--accent);
+  color: white;
+  font-size: 0.95rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.review-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.review-link {
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: #0b4e4b;
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.review-admin {
+  margin: 8px 0 24px;
+  text-align: center;
+}
+
+.admin-panel {
+  padding: 12px;
+  border: 1px dashed #8a8f98;
+  border-radius: 14px;
+  text-align: left;
+}
+
+.admin-panel h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.admin-form {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-form label {
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.admin-form input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 2px solid #8a8f98;
+  border-radius: 10px;
+  font-size: 1rem;
+}
+
+.review-error {
+  margin: 8px 0 0;
+  color: #b3261e;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.device-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-button {
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  padding: 8px 12px;
+  background: white;
+  color: var(--ink);
+  border-color: #aaa296;
+  text-align: left;
+}
+
+.device-button span {
+  color: #4d5560;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
