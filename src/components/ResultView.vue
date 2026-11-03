@@ -1,14 +1,29 @@
 <script setup>
-defineProps({
+import { computed } from 'vue'
+
+const props = defineProps({
   elapsedText: { type: String, required: true },
   accuracy: { type: Number, required: true },
   mistakes: { type: Number, required: true },
   isComplete: { type: Boolean, default: false },
   feedback: { type: Object, default: null },
   completedQuestions: { type: Number, default: 0 },
+  nextKey: { type: String, default: '' },
+  nextFinger: { type: String, default: '' },
 })
 
 defineEmits(['next', 'reset'])
+
+const nextInstruction = computed(() => (
+  props.nextKey ? `${props.nextKey.toUpperCase()}キーを${props.nextFinger}で押してください` : ''
+))
+
+const liveMessage = computed(() => {
+  if (props.isComplete) return 'クリア！ 次の問題に進めます'
+  if (props.feedback?.type === 'incorrect') return `不正解。${nextInstruction.value}`
+  if (props.feedback?.type === 'correct') return `正解。次は${nextInstruction.value}`
+  return `次は${nextInstruction.value}`
+})
 </script>
 
 <template>
@@ -20,12 +35,13 @@ defineEmits(['next', 'reset'])
       <div><dt>クリア</dt><dd>{{ completedQuestions }}問</dd></div>
     </dl>
 
-    <p class="feedback" :class="feedback?.type" role="status" aria-live="polite">
-      <template v-if="isComplete">クリア！</template>
-      <template v-else-if="feedback?.type === 'correct'">正解</template>
-      <template v-else-if="feedback?.type === 'incorrect'">もう一度</template>
-      <template v-else>キーをタップしよう</template>
-    </p>
+    <p
+      class="feedback"
+      :class="feedback?.type"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >{{ liveMessage }}</p>
 
     <div class="result-actions">
       <button type="button" class="secondary-button" data-testid="reset" @click="$emit('reset')">

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { STORAGE_KEY, clearAppState, loadAppState, saveAppState } from './storage.js'
+import {
+  STORAGE_KEY,
+  STORAGE_VERSION,
+  clearAppState,
+  loadAppState,
+  saveAppState,
+} from './storage.js'
 
 function memoryStorage() {
   const values = new Map()
@@ -20,7 +26,8 @@ describe('storage', () => {
       session: { question: 'jkl', position: 1, mistakes: 1 },
     }
     expect(saveAppState(state, storage)).toBe(true)
-    expect(loadAppState(storage)).toEqual(state)
+    expect(loadAppState(storage)).toEqual({ ...state, version: STORAGE_VERSION })
+    expect(JSON.parse(storage.getItem(STORAGE_KEY)).version).toBe(STORAGE_VERSION)
     expect(clearAppState(storage)).toBe(true)
     expect(storage.getItem(STORAGE_KEY)).toBeNull()
   })
@@ -39,5 +46,46 @@ describe('storage', () => {
   it('破損データを読み込まず既定状態へフォールバックできる', () => {
     const brokenJson = { getItem: () => '{not-json' }
     expect(loadAppState(brokenJson)).toBeNull()
+  })
+
+  it.each([
+    ['小数', 1.5],
+    ['負数', -1],
+    ['文字列', '3'],
+    ['null', null],
+    ['空配列', []],
+    ['値入り配列', [2]],
+  ])('questionIndexが%sなら0へ正規化する', (_label, questionIndex) => {
+    const storage = memoryStorage()
+    storage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, questionIndex }))
+    expect(loadAppState(storage).questionIndex).toBe(0)
+  })
+
+  it('questionIndexがInfinityなら0へ正規化する', () => {
+    const storage = { getItem: () => `{"version":${STORAGE_VERSION},"questionIndex":1e400}` }
+    expect(loadAppState(storage).questionIndex).toBe(0)
+  })
+
+  it.each([
+    ['version欠落', { settings: { hand: 'right' } }],
+    ['未知version', { version: STORAGE_VERSION + 1 }],
+    ['配列state', []],
+  ])('%sの保存データは破棄する', (_label, value) => {
+    const storage = memoryStorage()
+    storage.setItem(STORAGE_KEY, JSON.stringify(value))
+    expect(loadAppState(storage)).toBeNull()
+    expect(storage.getItem(STORAGE_KEY)).toBeNull()
+  })
+
+  it('現行versionで旧フィールドが欠落していても安全な既定値を返す', () => {
+    const storage = memoryStorage()
+    storage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION }))
+    expect(loadAppState(storage)).toEqual({
+      version: STORAGE_VERSION,
+      settings: { hand: 'left', level: 1, includeSymbols: false, layoutVariant: 'jis' },
+      results: { completedQuestions: 0, correctCount: 0, mistakes: 0, attempts: 0, practiceMs: 0 },
+      questionIndex: 0,
+      session: null,
+    })
   })
 })

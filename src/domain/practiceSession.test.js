@@ -67,4 +67,59 @@ describe('practiceSession', () => {
     expect(pausedAgain.elapsedMs).toBe(3500)
     expect(getElapsedMs(pausedAgain, 20000)).toBe(3500)
   })
+
+  it.each([
+    ['文字列', 'broken'],
+    ['小数', 1.5],
+    ['Infinity', Infinity],
+    ['負数', -1],
+    ['null', null],
+    ['配列', [1]],
+  ])('positionが%sなら進捗を0へ正規化する', (_label, position) => {
+    const restored = restorePracticeSession({
+      question: 'asd',
+      position,
+      attempts: 1,
+      correctCount: 99,
+      mistakes: 'broken',
+      isComplete: true,
+    }, 'asd', 5000)
+    expect(restored).toMatchObject({
+      position: 0,
+      correctCount: 0,
+      mistakes: 0,
+      attempts: 0,
+      isComplete: false,
+    })
+  })
+
+  it.each([
+    [
+      'positionが末尾で完了値が欠落',
+      { question: 'asd', position: 3 },
+      { position: 3, correctCount: 3, mistakes: 0, attempts: 3, isComplete: true },
+    ],
+    [
+      '完了値trueでもpositionが0',
+      { question: 'asd', position: 0, isComplete: true, mistakes: 2 },
+      { position: 0, correctCount: 0, mistakes: 2, attempts: 2, isComplete: false },
+    ],
+    [
+      '保存集計がpositionと矛盾',
+      { question: 'asd', position: 1, attempts: 1, correctCount: 99, mistakes: 4 },
+      { position: 1, correctCount: 1, mistakes: 4, attempts: 5, isComplete: false },
+    ],
+  ])('%sでもpositionを基準に整合させる', (_label, saved, expected) => {
+    expect(restorePracticeSession(saved, 'asd', 5000)).toMatchObject(expected)
+  })
+
+  it.each([null, []])('セッションが%jなら新規セッションとして復元する', (saved) => {
+    expect(restorePracticeSession(saved, 'asd', 5000)).toMatchObject({
+      position: 0,
+      correctCount: 0,
+      mistakes: 0,
+      attempts: 0,
+      isComplete: false,
+    })
+  })
 })

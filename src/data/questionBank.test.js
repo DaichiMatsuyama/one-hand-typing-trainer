@@ -63,6 +63,38 @@ describe('questionBank', () => {
     expect(getQuestion(options, 7)).toBe(getQuestion(options, 7))
   })
 
+  it('周回ごとに順序を変えつつ、再現性・品質・周回境界を維持する', () => {
+    for (const hand of ['left', 'right']) {
+      for (const level of [1, 2, 3]) {
+        for (const includeSymbols of [false, true]) {
+          const options = { hand, level, includeSymbols }
+          const banks = [0, 1, 2].map((cycle) => createQuestionBank({ ...options, cycle }))
+          expect(banks[1]).not.toEqual(banks[0])
+          expect(banks[2]).not.toEqual(banks[1])
+
+          banks.forEach((bank) => {
+            expect(validateQuestions(bank, options)).toBe(true)
+            expect(bank.every((question) => (
+              [...question].every((character, index) => index === 0 || character !== question[index - 1])
+            ))).toBe(true)
+            if (level > 1) expect(new Set(bank).size).toBe(QUESTION_COUNT)
+            if (hand === 'right' && includeSymbols) {
+              bank.forEach((question, index) => {
+                expect(/[;,./]/.test(question)).toBe((index + 1) % 4 === 0)
+              })
+            }
+          })
+
+          for (const cycle of [1, 2]) {
+            const boundaryIndex = cycle * QUESTION_COUNT
+            expect(getQuestion(options, boundaryIndex - 1)).not.toBe(getQuestion(options, boundaryIndex))
+            expect(getQuestion(options, boundaryIndex)).toBe(getQuestion(options, boundaryIndex))
+          }
+        }
+      }
+    }
+  })
+
   it.each([
     ['left', new Set(['a', 's', 'd', 'f', 'g'])],
     ['right', new Set(['h', 'j', 'k', 'l'])],

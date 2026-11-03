@@ -24,6 +24,11 @@ function keyClass(item) {
     incorrect: props.feedback?.type === 'incorrect' && props.feedback?.key === item.value,
   }
 }
+
+function keyAriaLabel(item) {
+  const homeDescription = item.isHome ? '、ホームポジション' : ''
+  return `${item.value.toUpperCase()}キー、${getFinger(item.finger).label}で押す${homeDescription}`
+}
 </script>
 
 <template>
@@ -42,7 +47,8 @@ function keyClass(item) {
           class="key"
           :class="keyClass(item)"
           :disabled="disabled"
-          :aria-label="`${item.value.toUpperCase()}キー、${getFinger(item.finger).label}で押す`"
+          :aria-label="keyAriaLabel(item)"
+          :aria-current="item.value === nextKey && !disabled ? 'true' : undefined"
           :data-key="item.value"
           @click="emit('press', item.value)"
         >

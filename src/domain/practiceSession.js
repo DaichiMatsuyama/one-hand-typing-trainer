@@ -83,13 +83,21 @@ export function restorePracticeSession(savedSession, question, now = Date.now())
   if (!savedSession || savedSession.question !== question) return createPracticeSession(question, now)
 
   const elapsedMs = Number.isFinite(savedSession.elapsedMs) ? Math.max(0, savedSession.elapsedMs) : 0
+  const savedPosition = Number.isSafeInteger(savedSession.position) && savedSession.position >= 0
+    ? savedSession.position
+    : 0
+  const position = Math.min(savedPosition, question.length)
+  const mistakes = Number.isSafeInteger(savedSession.mistakes) && savedSession.mistakes >= 0
+    ? savedSession.mistakes
+    : 0
+  const correctCount = position
   return {
     ...createPracticeSession(question, now - elapsedMs),
-    position: Math.min(Math.max(0, savedSession.position || 0), question.length),
-    attempts: Math.max(0, savedSession.attempts || 0),
-    correctCount: Math.max(0, savedSession.correctCount || 0),
-    mistakes: Math.max(0, savedSession.mistakes || 0),
-    isComplete: Boolean(savedSession.isComplete),
+    position,
+    attempts: correctCount + mistakes,
+    correctCount,
+    mistakes,
+    isComplete: position === question.length,
     isPaused: false,
     elapsedMs,
     feedback: null,

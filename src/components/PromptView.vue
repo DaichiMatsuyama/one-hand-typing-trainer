@@ -32,6 +32,7 @@ const nextFinger = computed(() => {
           current: index === position && !isComplete,
           pending: index > position,
         }"
+        :aria-current="index === position && !isComplete ? 'step' : undefined"
       >{{ character }}</span>
     </p>
   </section>

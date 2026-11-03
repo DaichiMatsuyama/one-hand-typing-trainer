@@ -35,7 +35,8 @@ html {
 
 body {
   min-height: 100dvh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background:
     radial-gradient(circle at 15% 10%, rgb(255 205 112 / 22%), transparent 28%),
     linear-gradient(145deg, #fbf8f0 0%, #eef4f0 100%);
@@ -82,11 +83,13 @@ input:focus-visible {
     max(12px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .top-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: clamp(8px, 1.8vw, 18px);
@@ -195,7 +198,8 @@ main {
   justify-content: center;
   min-height: 108px;
   padding: 10px 14px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: rgb(255 253 248 / 88%);
@@ -248,7 +252,7 @@ main {
 }
 
 .prompt-text .pending {
-  color: #9ca3ad;
+  color: var(--muted);
 }
 
 .keyboard-panel {
@@ -325,7 +329,8 @@ main {
   bottom: 3px;
   font-size: 0.58rem;
   font-weight: 850;
-  opacity: 0.75;
+  color: #28303b;
+  opacity: 0.9;
 }
 
 .home-bump {
@@ -404,6 +409,8 @@ main {
   flex-direction: column;
   justify-content: space-between;
   min-height: 116px;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 9px 12px;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -517,6 +524,8 @@ main {
     color: var(--ink);
     background: #f7f3ea;
     text-align: center;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .phone-icon {
@@ -596,7 +605,7 @@ main {
   }
 
   .segmented button {
-    min-width: 43px;
+    min-width: 44px;
     padding-inline: 7px;
   }
 

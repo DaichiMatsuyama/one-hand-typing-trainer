@@ -21,8 +21,8 @@ function mulberry32(seed) {
   }
 }
 
-function seedFromOptions({ hand, level, includeSymbols, layoutVariant }) {
-  const source = `${layoutVariant}:${hand}:${level}:${includeSymbols ? 1 : 0}`
+function seedFromOptions({ hand, level, includeSymbols, layoutVariant, cycle }) {
+  const source = `${layoutVariant}:${hand}:${level}:${includeSymbols ? 1 : 0}:${cycle}`
   let hash = 2166136261
   for (const character of source) {
     hash ^= character.charCodeAt(0)
@@ -82,26 +82,20 @@ function addScheduledSymbol(characters, symbols, questionIndex, random) {
   return result
 }
 
-export function createQuestionBank({
-  hand = 'left',
-  level = 1,
-  includeSymbols = false,
-  layoutVariant = 'jis',
-} = {}) {
-  const normalizedLevel = [1, 2, 3].includes(Number(level)) ? Number(level) : 1
+function generateQuestionBank({ hand, level, includeSymbols, layoutVariant, cycle }) {
   const weightedKeys = weightedLetterKeys(hand, layoutVariant)
   const symbols = includeSymbols
     ? getLayoutKeys(hand, layoutVariant).filter((item) => item.isSymbol).map((item) => item.value)
     : []
-  const lengths = LEVEL_LENGTHS[normalizedLevel]
-  const random = mulberry32(seedFromOptions({ hand, level: normalizedLevel, includeSymbols, layoutVariant }))
+  const lengths = LEVEL_LENGTHS[level]
+  const random = mulberry32(seedFromOptions({ hand, level, includeSymbols, layoutVariant, cycle }))
   const pickLetter = createWeightedPicker(weightedKeys, random)
   const questions = []
 
   for (let questionIndex = 0; questionIndex < QUESTION_COUNT; questionIndex += 1) {
     const length = lengths[questionIndex % lengths.length]
 
-    if (normalizedLevel === 1) {
+    if (level === 1) {
       const scheduledSymbol = addScheduledSymbol([''], symbols, questionIndex, random)[0]
       const previous = questions.at(-1) ?? ''
       questions.push(scheduledSymbol || pickLetter(previous))
@@ -121,6 +115,48 @@ export function createQuestionBank({
   return questions
 }
 
+function avoidBoundaryDuplicate(questions, previousQuestion, level) {
+  if (!previousQuestion || questions[0] !== previousQuestion) return questions
+
+  const firstHasSymbol = /[;,./]/.test(questions[0])
+  for (let index = 1; index < questions.length - 1; index += 1) {
+    if (/[;,./]/.test(questions[index]) !== firstHasSymbol) continue
+    const candidate = [...questions]
+    const firstQuestion = candidate[0]
+    candidate[0] = candidate[index]
+    candidate[index] = firstQuestion
+    const hasAdjacentDuplicate = level === 1
+      && candidate.some((question, candidateIndex) => (
+        candidateIndex > 0 && question === candidate[candidateIndex - 1]
+      ))
+    if (candidate[0] !== previousQuestion && !hasAdjacentDuplicate) return candidate
+  }
+  return questions
+}
+
+export function createQuestionBank({
+  hand = 'left',
+  level = 1,
+  includeSymbols = false,
+  layoutVariant = 'jis',
+  cycle = 0,
+} = {}) {
+  const normalizedLevel = [1, 2, 3].includes(Number(level)) ? Number(level) : 1
+  const normalizedCycle = Number.isSafeInteger(cycle) && cycle >= 0 ? cycle : 0
+  const options = {
+    hand,
+    level: normalizedLevel,
+    includeSymbols,
+    layoutVariant,
+    cycle: normalizedCycle,
+  }
+  const questions = generateQuestionBank(options)
+  if (normalizedCycle === 0) return questions
+
+  const previousQuestions = generateQuestionBank({ ...options, cycle: normalizedCycle - 1 })
+  return avoidBoundaryDuplicate(questions, previousQuestions.at(-1), normalizedLevel)
+}
+
 export function validateQuestions(questions, { hand = 'left', includeSymbols = false, layoutVariant = 'jis' } = {}) {
   const allowed = new Set(
     getLayoutKeys(hand, layoutVariant, { includeSymbols }).map((item) => item.value.toLowerCase()),
@@ -134,9 +170,11 @@ export function validateQuestions(questions, { hand = 'left', includeSymbols = f
 }
 
 export function getQuestion(options, questionIndex = 0) {
-  const questions = createQuestionBank(options)
+  const normalizedIndex = Number.isSafeInteger(questionIndex) && questionIndex >= 0 ? questionIndex : 0
+  const cycle = Math.floor(normalizedIndex / QUESTION_COUNT)
+  const questions = createQuestionBank({ ...options, cycle })
   if (!validateQuestions(questions, options)) {
     throw new Error('選択中の手で入力できない問題が含まれています。')
   }
-  return questions[Math.abs(questionIndex) % questions.length]
+  return questions[normalizedIndex % questions.length]
 }

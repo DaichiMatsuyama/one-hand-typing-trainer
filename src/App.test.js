@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
-import { STORAGE_KEY } from './services/storage.js'
+import { STORAGE_KEY, STORAGE_VERSION } from './services/storage.js'
 
 describe('App', () => {
   beforeEach(() => {
@@ -108,10 +108,117 @@ describe('App', () => {
     expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:02')
 
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
-    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('pageshow'))
     vi.advanceTimersByTime(1000)
     await wrapper.vm.$nextTick()
     expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:03')
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['小数', 1.5],
+    ['負数', -1],
+    ['文字列', '2'],
+    ['null', null],
+    ['配列', [2]],
+  ])('questionIndexが%sの保存データでも初期状態で起動する', (_label, questionIndex) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, questionIndex }))
+    const wrapper = mount(App)
+    expect(wrapper.get('[data-testid="hand-left"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('.prompt-text').text()).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('questionIndexがInfinityの保存データでも初期状態で起動する', () => {
+    localStorage.setItem(STORAGE_KEY, `{"version":${STORAGE_VERSION},"questionIndex":1e400}`)
+    const wrapper = mount(App)
+    expect(wrapper.get('.prompt-text').text()).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('未知versionの保存データを破棄して起動する', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION + 1, questionIndex: 4 }))
+    const wrapper = mount(App)
+    expect(wrapper.get('[data-testid="hand-left"]').attributes('aria-pressed')).toBe('true')
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('クリア後に連打・再マウントしても結果を一度だけ加算する', async () => {
+    const first = mount(App)
+    const expected = first.get('.prompt-text .current').text()
+    const key = first.get(`[data-key="${expected}"]`)
+    await key.trigger('click')
+    await key.trigger('click')
+    await key.trigger('click')
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).results.completedQuestions).toBe(1)
+    first.unmount()
+
+    const restored = mount(App)
+    expect(restored.get('.stats').text()).toContain('クリア1問')
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).results.completedQuestions).toBe(1)
+    restored.unmount()
+  })
+
+  it('途中入力後の左右切替・レベル切替で位置・ミス・時間をリセットする', async () => {
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="level-2"]').trigger('click')
+
+    async function addProgressAndMistake() {
+      const expected = wrapper.get('.prompt-text .current').text()
+      await wrapper.get(`[data-key="${expected}"]`).trigger('click')
+      const nextExpected = wrapper.get('.prompt-text .current').text()
+      const wrongKey = wrapper.findAll('.key').find((keyWrapper) => keyWrapper.attributes('data-key') !== nextExpected)
+      await wrongKey.trigger('click')
+      vi.advanceTimersByTime(2000)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findAll('.prompt-text .done')).toHaveLength(1)
+      expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('1')
+      expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:02')
+    }
+
+    await addProgressAndMistake()
+    await wrapper.get('[data-testid="hand-right"]').trigger('click')
+    expect(wrapper.findAll('.prompt-text .done')).toHaveLength(0)
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('0')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
+
+    await addProgressAndMistake()
+    await wrapper.get('[data-testid="level-3"]').trigger('click')
+    expect(wrapper.findAll('.prompt-text .done')).toHaveLength(0)
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('0')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
+    wrapper.unmount()
+  })
+
+  it('計時中は5秒ごとに途中経過を保存する', async () => {
+    const wrapper = mount(App)
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+    vi.advanceTimersByTime(5000)
+    await wrapper.vm.$nextTick()
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    expect(saved.version).toBe(STORAGE_VERSION)
+    expect(saved.session.elapsedMs).toBe(5000)
+    wrapper.unmount()
+  })
+
+  it('次キー・ホームポジション・ライブ案内をVoiceOver向けに提供する', async () => {
+    const wrapper = mount(App)
+    const expected = wrapper.get('.prompt-text .current').text()
+    expect(wrapper.get('.prompt-text .current').attributes('aria-current')).toBe('step')
+    expect(wrapper.get(`[data-key="${expected}"]`).attributes('aria-current')).toBe('true')
+    expect(wrapper.get('[data-key="f"]').attributes('aria-label')).toContain('ホームポジション')
+    expect(wrapper.get('.feedback').text()).toMatch(/次は.+キーを.+指で押してください/)
+
+    await wrapper.get('[data-testid="level-2"]').trigger('click')
+    const firstExpected = wrapper.get('.prompt-text .current').text()
+    const wrongKey = wrapper.findAll('.key').find((keyWrapper) => keyWrapper.attributes('data-key') !== firstExpected)
+    await wrongKey.trigger('click')
+    expect(wrapper.get('.feedback').text()).toContain('不正解')
+    expect(wrapper.get('.feedback').text()).toContain(firstExpected.toUpperCase())
+
+    await wrapper.get(`[data-key="${firstExpected}"]`).trigger('click')
+    expect(wrapper.get('.feedback').text()).toContain('正解。次は')
     wrapper.unmount()
   })
 })

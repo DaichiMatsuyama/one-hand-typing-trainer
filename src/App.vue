@@ -4,7 +4,7 @@ import KeyboardView from './components/KeyboardView.vue'
 import LevelSelector from './components/LevelSelector.vue'
 import PromptView from './components/PromptView.vue'
 import ResultView from './components/ResultView.vue'
-import { getKeyboardLayout } from './data/keyboardLayouts.js'
+import { getFinger, getKeyboardLayout } from './data/keyboardLayouts.js'
 import { getQuestion } from './data/questionBank.js'
 import {
   createPracticeSession,
@@ -18,22 +18,55 @@ import {
 import {
   defaultResults,
   defaultSettings,
+  clearAppState,
   loadAppState,
   saveAppState,
 } from './services/storage.js'
 
-const saved = loadAppState()
-const settings = ref({ ...defaultSettings, ...(saved?.settings ?? {}) })
-const results = ref({ ...defaultResults, ...(saved?.results ?? {}) })
-const questionIndex = ref(saved?.questionIndex ?? 0)
+const SNAPSHOT_INTERVAL_MS = 5000
+
+function createInitialState() {
+  try {
+    const saved = loadAppState()
+    const initialSettings = { ...defaultSettings, ...(saved?.settings ?? {}) }
+    const initialResults = { ...defaultResults, ...(saved?.results ?? {}) }
+    const initialQuestionIndex = saved?.questionIndex ?? 0
+    const question = getQuestion(initialSettings, initialQuestionIndex)
+    return {
+      settings: initialSettings,
+      results: initialResults,
+      questionIndex: initialQuestionIndex,
+      session: restorePracticeSession(saved?.session, question),
+    }
+  } catch {
+    clearAppState()
+    const initialSettings = { ...defaultSettings }
+    const question = getQuestion(initialSettings, 0)
+    return {
+      settings: initialSettings,
+      results: { ...defaultResults },
+      questionIndex: 0,
+      session: createPracticeSession(question),
+    }
+  }
+}
+
+const initialState = createInitialState()
+const settings = ref(initialState.settings)
+const results = ref(initialState.results)
+const questionIndex = ref(initialState.questionIndex)
 
 const questionOptions = computed(() => ({ ...settings.value }))
 const currentQuestion = computed(() => getQuestion(questionOptions.value, questionIndex.value))
-const session = ref(restorePracticeSession(saved?.session, currentQuestion.value))
+const session = ref(initialState.session)
 const now = ref(Date.now())
 
 const layout = computed(() => getKeyboardLayout(settings.value.hand, settings.value.layoutVariant))
 const nextKey = computed(() => session.value.question[session.value.position] ?? '')
+const nextFinger = computed(() => {
+  const key = layout.value.rows.flatMap((row) => row.keys).find((item) => item.value === nextKey.value)
+  return key ? getFinger(key.finger).label : ''
+})
 const elapsedMs = computed(() => (
   getElapsedMs(session.value, now.value)
 ))
@@ -47,14 +80,16 @@ const accuracy = computed(() => getAccuracy(session.value))
 
 let timer
 let feedbackTimer
+let lastSnapshotAt = Date.now()
 
-function snapshot() {
+function snapshot(timestamp = Date.now()) {
   saveAppState({
     settings: settings.value,
     results: results.value,
     questionIndex: questionIndex.value,
     session: { ...session.value, elapsedMs: elapsedMs.value, feedback: null },
   })
+  lastSnapshotAt = timestamp
 }
 
 function beginQuestion(savedSession = null) {
@@ -119,7 +154,7 @@ function handlePageHide() {
   const timestamp = Date.now()
   session.value = pausePracticeSession(session.value, timestamp)
   now.value = timestamp
-  snapshot()
+  snapshot(timestamp)
 }
 
 function handleVisibilityChange() {
@@ -128,14 +163,29 @@ function handleVisibilityChange() {
     ? pausePracticeSession(session.value, timestamp)
     : resumePracticeSession(session.value, timestamp)
   now.value = timestamp
-  snapshot()
+  snapshot(timestamp)
+}
+
+function handlePageShow() {
+  const timestamp = Date.now()
+  session.value = document.hidden
+    ? pausePracticeSession(session.value, timestamp)
+    : resumePracticeSession(session.value, timestamp)
+  now.value = timestamp
+  snapshot(timestamp)
 }
 
 onMounted(() => {
   timer = setInterval(() => {
-    now.value = Date.now()
+    const timestamp = Date.now()
+    now.value = timestamp
+    if (!session.value.isPaused && !session.value.isComplete
+      && timestamp - lastSnapshotAt >= SNAPSHOT_INTERVAL_MS) {
+      snapshot(timestamp)
+    }
   }, 1000)
   window.addEventListener('pagehide', handlePageHide)
+  window.addEventListener('pageshow', handlePageShow)
   document.addEventListener('visibilitychange', handleVisibilityChange)
   if (document.hidden) handleVisibilityChange()
 })
@@ -144,6 +194,7 @@ onBeforeUnmount(() => {
   clearInterval(timer)
   clearTimeout(feedbackTimer)
   window.removeEventListener('pagehide', handlePageHide)
+  window.removeEventListener('pageshow', handlePageShow)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
@@ -212,6 +263,8 @@ onBeforeUnmount(() => {
         :mistakes="session.mistakes"
         :is-complete="session.isComplete"
         :feedback="session.feedback"
+        :next-key="nextKey"
+        :next-finger="nextFinger"
         :completed-questions="results.completedQuestions"
         @next="nextQuestion"
         @reset="resetQuestion"
@@ -219,7 +272,7 @@ onBeforeUnmount(() => {
     </main>
   </div>
 
-  <aside class="rotate-notice" role="dialog" aria-labelledby="rotate-title" aria-modal="true">
+  <aside class="rotate-notice" role="status" aria-live="polite" aria-labelledby="rotate-title">
     <div class="phone-icon" aria-hidden="true">↻</div>
     <h2 id="rotate-title">iPhoneを横向きにしてください</h2>
     <p>横画面にすると、キーを大きく表示できます。</p>

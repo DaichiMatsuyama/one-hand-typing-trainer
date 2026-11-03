@@ -1,4 +1,5 @@
 export const STORAGE_KEY = 'one-hand-typing-trainer:v1'
+export const STORAGE_VERSION = 1
 
 export const defaultSettings = Object.freeze({
   hand: 'left',
@@ -16,48 +17,73 @@ export const defaultResults = Object.freeze({
 })
 
 function sanitizeSettings(settings = {}) {
+  const source = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}
   return {
-    hand: settings.hand === 'right' ? 'right' : 'left',
-    level: [1, 2, 3].includes(Number(settings.level)) ? Number(settings.level) : 1,
-    includeSymbols: Boolean(settings.includeSymbols),
-    layoutVariant: settings.layoutVariant === 'us' ? 'us' : 'jis',
+    hand: source.hand === 'right' ? 'right' : 'left',
+    level: [1, 2, 3].includes(Number(source.level)) ? Number(source.level) : 1,
+    includeSymbols: Boolean(source.includeSymbols),
+    layoutVariant: source.layoutVariant === 'us' ? 'us' : 'jis',
   }
 }
 
 function sanitizeResults(results = {}) {
+  const source = results && typeof results === 'object' && !Array.isArray(results) ? results : {}
   return Object.fromEntries(
-    Object.keys(defaultResults).map((key) => [key, Math.max(0, Number(results[key]) || 0)]),
+    Object.keys(defaultResults).map((key) => {
+      const value = source[key]
+      return [key, Number.isSafeInteger(value) && value >= 0 ? value : 0]
+    }),
   )
 }
 
-export function loadAppState(storage = globalThis.localStorage) {
+function sanitizeQuestionIndex(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
+export function loadAppState(storage) {
+  let target = storage
   try {
-    const raw = storage?.getItem(STORAGE_KEY)
+    target ??= globalThis.localStorage
+    const raw = target?.getItem(STORAGE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== STORAGE_VERSION) {
+      target?.removeItem(STORAGE_KEY)
+      return null
+    }
     return {
+      version: STORAGE_VERSION,
       settings: sanitizeSettings(parsed.settings),
       results: sanitizeResults(parsed.results),
-      questionIndex: Math.max(0, Number(parsed.questionIndex) || 0),
-      session: parsed.session && typeof parsed.session === 'object' ? parsed.session : null,
+      questionIndex: sanitizeQuestionIndex(parsed.questionIndex),
+      session: parsed.session && typeof parsed.session === 'object' && !Array.isArray(parsed.session)
+        ? parsed.session
+        : null,
     }
   } catch {
+    try {
+      target?.removeItem(STORAGE_KEY)
+    } catch {
+      // Storage access itself may be blocked; the app still falls back to memory defaults.
+    }
     return null
   }
 }
 
-export function saveAppState(state, storage = globalThis.localStorage) {
+export function saveAppState(state, storage) {
   try {
-    storage?.setItem(STORAGE_KEY, JSON.stringify(state))
+    const target = storage ?? globalThis.localStorage
+    target?.setItem(STORAGE_KEY, JSON.stringify({ ...state, version: STORAGE_VERSION }))
     return true
   } catch {
     return false
   }
 }
 
-export function clearAppState(storage = globalThis.localStorage) {
+export function clearAppState(storage) {
   try {
-    storage?.removeItem(STORAGE_KEY)
+    const target = storage ?? globalThis.localStorage
+    target?.removeItem(STORAGE_KEY)
     return true
   } catch {
     return false
