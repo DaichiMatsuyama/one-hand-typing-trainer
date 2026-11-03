@@ -49,6 +49,8 @@ Viteの開発サーバーを同一ネットワーク上のiPhoneから確認す�
 node scripts/generate-icons.mjs
 ```
 
+デザインは、4列×3段のキー(Q W E R / A S D F / Z X C V)を実物どおりの段ずれで並べ、4本の指(小指・薬指・中指・人差し指)をアプリと同じ色で塗り分けたもの。ホームポジションのFだけ、白い縁と突起の線で強調している。縁がなめらかになるよう、4×4のスーパーサンプリングで描画している。
+
 生成物は通常表示用の `public/icons/icon-180.png` / `public/icons/icon-512.png` と、キー外形を中央80%の安全円内に収めたmaskable用の `public/icons/icon-maskable-512.png` です。manifestでは通常用（`purpose: any`）とmaskable用（`purpose: maskable`）を別エントリにしています。
 
 ## GitHub Pagesへのデプロイ
