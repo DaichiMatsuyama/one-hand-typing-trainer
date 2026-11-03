@@ -7,6 +7,7 @@ import {
   calculateLandscapeLayout,
   estimatePromptWidth,
 } from './layoutMetrics.js'
+import { getLayoutPitchCount } from './data/keyboardLayouts.js'
 
 const styles = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
 const indexHtml = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8')
@@ -76,24 +77,18 @@ describe('実機向けレイアウト', () => {
       stripControlsWidth: cssPxVariable('strip-controls-width'),
       stripCompactControlsWidth: cssPxVariable('strip-compact-controls-width'),
       stripPromptMinimumWidth: cssPxVariable('strip-prompt-min'),
-      stripCompletePromptMinimumWidth: cssPxVariable('strip-complete-prompt-min'),
       stripStatsWidth: cssPxVariable('strip-stats-width'),
       stripCompactStatsWidth: cssPxVariable('strip-compact-stats-width'),
       stripActionWidth: cssPxVariable('strip-action-width'),
       stripGridGap: cssPxVariable('strip-grid-gap'),
       stripInlinePadding: cssPxVariable('strip-inline-padding'),
       stripResultGap: cssPxVariable('strip-result-gap'),
-      stripActionGap: cssPxVariable('strip-action-gap'),
       stripCompactGridGap: cssPxVariable('strip-compact-grid-gap'),
       stripCompactInlinePadding: cssPxVariable('strip-compact-inline-padding'),
       stripCompactResultGap: cssPxVariable('strip-compact-result-gap'),
       compactBreakpoint: cssNumber(
         /@container\s+practice\s*\(max-width:\s*([0-9.]+)px\)/,
         'コンパクト表示の境界',
-      ),
-      keyboardPitchCount: cssNumber(
-        /--key-pitch-width:[\s\S]*?\/\s*([0-9.]+)\s*\n\s*\);/,
-        '幅方向のキーピッチ数',
       ),
       keyGapRatio: cssNumber(
         /calc\(var\(--key-pitch\)\s*\*\s*([0-9.]+)\)/,
@@ -104,8 +99,12 @@ describe('実機向けレイアウト', () => {
     expect(cssValues).toEqual(Object.fromEntries(
       Object.keys(cssValues).map((key) => [key, LANDSCAPE_LAYOUT[key]]),
     ))
+    expect(cssNumber(/--keyboard-pitch-count:\s*([0-9.]+)/, '既定のキーピッチ数')).toBe(
+      getLayoutPitchCount('left', 'jis'),
+    )
+    expect(styles).toContain('/ var(--keyboard-pitch-count)')
+    expect(styles).toContain('var(--key-pitch) * var(--keyboard-pitch-count)')
     expect(styles).toContain('minmax(var(--strip-prompt-min), 1fr)')
-    expect(styles).toContain('minmax(var(--strip-complete-prompt-min), 1fr)')
     expect(styles).toMatch(/\.prompt-card\.complete\s*\{\s*gap:\s*0/)
     expect(styles).toContain('width: var(--strip-controls-width)')
     expect(styles).toContain('width: var(--strip-stats-width)')
@@ -157,10 +156,41 @@ describe('実機向けレイアウト', () => {
     expect(metrics.stripClientWidth).toBe(653)
     expect(metrics.isCompact).toBe(true)
     expect(metrics.normalStripWidth).toBe(627)
-    expect(metrics.completeStripWidth).toBe(524)
+    expect(metrics.completeStripWidth).toBe(627)
     expect(metrics.requiredStripWidth).toBeLessThanOrEqual(metrics.stripClientWidth)
     expect(styles).toMatch(/@container\s+practice[\s\S]*?\.stats div:last-child\s*\{\s*display:\s*none/)
-    expect(styles).toMatch(/@container\s+practice[\s\S]*?\.result-bar\.complete \.stats\s*\{\s*display:\s*none/)
+    expect(styles).not.toMatch(/\.result-bar\.complete \.stats\s*\{\s*display:\s*none/)
+  })
+
+  it.each([
+    ['667x375', 667, 375, {}],
+    ['852x393 safe-areaあり', 852, 393, { left: 59, right: 59, bottom: 21 }],
+  ])('%sでJIS右手6.75ピッチが収まり、凡例を下段の空きへ置ける', (_name, width, height, safeArea) => {
+    const metrics = calculateLandscapeLayout({
+      width,
+      height,
+      safeArea,
+      hand: 'right',
+      layoutVariant: 'jis',
+    })
+
+    expect(metrics.keyboardPitchCount).toBe(6.75)
+    expect(metrics.widthPitch).toBeCloseTo(metrics.availableWidth / 6.75, 5)
+    expect(metrics.keyboardWidth).toBeLessThanOrEqual(metrics.availableWidth)
+    expect(metrics.legendFits).toBe(true)
+    expect(metrics.noHorizontalScroll).toBe(true)
+    expect(metrics.hasMinimumTapTarget).toBe(true)
+  })
+
+  it('左手とUS右手は5.75ピッチのままにする', () => {
+    expect(calculateLandscapeLayout({ width: 667, height: 375, hand: 'left' }).keyboardPitchCount).toBe(5.75)
+    expect(calculateLandscapeLayout({
+      width: 667,
+      height: 375,
+      hand: 'right',
+      layoutVariant: 'us',
+    }).keyboardPitchCount).toBe(5.75)
+    expect(styles).toMatch(/\.finger-legend-embedded\s*\{[\s\S]*?left:\s*0[\s\S]*?width:\s*calc\(\(var\(--key-pitch\) \* 0\.75\)/)
   })
 
   it('852x393とsafe-area左右59・下21では通常表示を保ち、影まで高さ内に収める', () => {
@@ -179,6 +209,7 @@ describe('実機向けレイアウト', () => {
     expect(metrics.keyboardHeightBudget).toBe(311)
     expect(metrics.heightPitch).toBeCloseTo(103.67, 2)
     expect(metrics.widthPitch).toBeCloseTo(127.65, 2)
+    expect(metrics.keyboardPitchCount).toBe(5.75)
     expect(metrics.keyPitch).toBeCloseTo(103.67, 2)
     expect(metrics.keySize).toBeCloseTo(96.93, 2)
     expect(metrics.keyboardVisualHeight).toBeLessThanOrEqual(metrics.keyboardContentHeight)

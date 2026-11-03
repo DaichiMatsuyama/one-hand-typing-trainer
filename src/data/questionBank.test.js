@@ -41,20 +41,52 @@ describe('questionBank', () => {
     }
   }
 
-  it('左手15キー、右手15キーを定義する', () => {
-    expect(getLayoutKeys('left')).toHaveLength(15)
-    expect(getLayoutKeys('right')).toHaveLength(15)
+  it('JIS右手だけ6列目を追加し、USと左手は従来のキー数を保つ', () => {
+    expect(getLayoutKeys('left', 'jis')).toHaveLength(15)
+    expect(getLayoutKeys('left', 'us')).toHaveLength(15)
+    expect(getLayoutKeys('right', 'jis')).toHaveLength(18)
+    expect(getLayoutKeys('right', 'us')).toHaveLength(15)
   })
 
-  it('記号OFFでは記号を出さず、右手の記号ONでは対象記号を混ぜる', () => {
+  it('JIS右手の6列配置・offset・小指担当を定義する', () => {
+    const layout = getKeyboardLayout('right', 'jis')
+    expect(layout.rows.map((row) => row.offset)).toEqual([0, 0.25, 0.75])
+    expect(layout.rows.map((row) => row.keys.map((item) => item.value))).toEqual([
+      ['y', 'u', 'i', 'o', 'p', '@'],
+      ['h', 'j', 'k', 'l', ';', ':'],
+      ['n', 'm', ',', '.', '/', '_'],
+    ])
+    for (const symbol of ['@', ':', '_']) {
+      expect(getLayoutKeys('right', 'jis').find((item) => item.value === symbol)).toMatchObject({
+        finger: 'rightPinky',
+        isSymbol: true,
+      })
+    }
+  })
+
+  it('記号OFFでは記号を出さず、JIS右手の記号ONでは7記号を定率で混ぜる', () => {
     const withoutSymbols = createQuestionBank({ hand: 'right', level: 3, includeSymbols: false })
     const withSymbols = createQuestionBank({ hand: 'right', level: 3, includeSymbols: true })
-    expect(withoutSymbols.join('')).not.toMatch(/[;,./]/)
-    expect(withSymbols.join('')).toMatch(/[;,./]/)
+    const symbolPattern = /[;,.\/@:_]/
+    expect(withoutSymbols.join('')).not.toMatch(symbolPattern)
+    expect(new Set([...withSymbols.join('')].filter((character) => symbolPattern.test(character)))).toEqual(
+      new Set([';', ',', '.', '/', '@', ':', '_']),
+    )
     withSymbols.forEach((question, index) => {
-      const hasSymbol = /[;,./]/.test(question)
+      const hasSymbol = symbolPattern.test(question)
       expect(hasSymbol).toBe((index + 1) % 4 === 0)
     })
+  })
+
+  it('US右手の記号ONにはJIS専用の@ : _を出さない', () => {
+    const questions = createQuestionBank({
+      hand: 'right',
+      level: 3,
+      includeSymbols: true,
+      layoutVariant: 'us',
+    })
+    expect(questions.join('')).toMatch(/[;,.\/]/)
+    expect(questions.join('')).not.toMatch(/[@:_]/)
   })
 
   it('同じ条件ならバンク全体が決定論的に同じになる', () => {
@@ -79,8 +111,9 @@ describe('questionBank', () => {
             ))).toBe(true)
             if (level > 1) expect(new Set(bank).size).toBe(QUESTION_COUNT)
             if (hand === 'right' && includeSymbols) {
+              const symbolPattern = /[;,.\/@:_]/
               bank.forEach((question, index) => {
-                expect(/[;,./]/.test(question)).toBe((index + 1) % 4 === 0)
+                expect(symbolPattern.test(question)).toBe((index + 1) % 4 === 0)
               })
             }
           })

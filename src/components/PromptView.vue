@@ -26,6 +26,7 @@ const nextFinger = computed(() => {
       </p>
     </div>
     <p class="prompt-text" :aria-label="`問題 ${question}、${position}文字入力済み`">
+      <span v-if="isComplete" class="completion-mark" aria-hidden="true">✓</span>
       <span
         v-for="(character, index) in question"
         :key="index"

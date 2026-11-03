@@ -4,7 +4,8 @@ import KeyboardView from './components/KeyboardView.vue'
 import LevelSelector from './components/LevelSelector.vue'
 import PromptView from './components/PromptView.vue'
 import ResultView from './components/ResultView.vue'
-import { getFinger, getKeyboardLayout } from './data/keyboardLayouts.js'
+import { AUTO_ADVANCE_MS } from './appConfig.js'
+import { getFinger, getKeyboardLayout, getLayoutPitchCount } from './data/keyboardLayouts.js'
 import { getQuestion } from './data/questionBank.js'
 import {
   createPracticeSession,
@@ -66,6 +67,9 @@ const isStandalone = ref(
 )
 
 const layout = computed(() => getKeyboardLayout(settings.value.hand, settings.value.layoutVariant))
+const layoutPitchCount = computed(() => (
+  getLayoutPitchCount(settings.value.hand, settings.value.layoutVariant)
+))
 const nextKey = computed(() => session.value.question[session.value.position] ?? '')
 const nextFinger = computed(() => {
   const key = layout.value.rows.flatMap((row) => row.keys).find((item) => item.value === nextKey.value)
@@ -84,6 +88,7 @@ const accuracy = computed(() => getAccuracy(session.value))
 
 let timer
 let feedbackTimer
+let autoAdvanceTimer
 let displayModeQuery
 let lastSnapshotAt = Date.now()
 
@@ -102,12 +107,36 @@ function snapshot(timestamp = Date.now()) {
   lastSnapshotAt = timestamp
 }
 
+function cancelAutoAdvance() {
+  clearTimeout(autoAdvanceTimer)
+  autoAdvanceTimer = undefined
+}
+
 function beginQuestion(savedSession = null) {
+  cancelAutoAdvance()
+  clearTimeout(feedbackTimer)
+  feedbackTimer = undefined
   now.value = Date.now()
   session.value = savedSession
     ? restorePracticeSession(savedSession, currentQuestion.value, now.value)
     : createPracticeSession(currentQuestion.value, now.value)
+  if (document.hidden) {
+    session.value = pausePracticeSession(session.value, now.value)
+  }
   snapshot()
+}
+
+function advanceToNextQuestion() {
+  autoAdvanceTimer = undefined
+  if (!session.value.isComplete) return
+  questionIndex.value += 1
+  beginQuestion()
+}
+
+function scheduleAutoAdvance() {
+  cancelAutoAdvance()
+  if (!session.value.isComplete) return
+  autoAdvanceTimer = setTimeout(advanceToNextQuestion, AUTO_ADVANCE_MS)
 }
 
 function changePractice(nextSettings) {
@@ -143,16 +172,12 @@ function pressKey(key) {
       attempts: results.value.attempts + session.value.attempts,
       practiceMs: results.value.practiceMs + session.value.elapsedMs,
     }
+    scheduleAutoAdvance()
   }
   feedbackTimer = setTimeout(() => {
     session.value = { ...session.value, feedback: null }
   }, 450)
   snapshot()
-}
-
-function nextQuestion() {
-  questionIndex.value += 1
-  beginQuestion()
 }
 
 function resetQuestion() {
@@ -202,11 +227,13 @@ onMounted(() => {
   window.addEventListener('pageshow', handlePageShow)
   document.addEventListener('visibilitychange', handleVisibilityChange)
   if (document.hidden) handleVisibilityChange()
+  if (session.value.isComplete) scheduleAutoAdvance()
 })
 
 onBeforeUnmount(() => {
   clearInterval(timer)
   clearTimeout(feedbackTimer)
+  cancelAutoAdvance()
   window.removeEventListener('pagehide', handlePageHide)
   window.removeEventListener('pageshow', handlePageShow)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
@@ -215,7 +242,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-shell" :data-hand="settings.hand">
+  <div
+    class="app-shell"
+    :data-hand="settings.hand"
+    :data-layout-variant="settings.layoutVariant"
+    :style="{ '--keyboard-pitch-count': layoutPitchCount }"
+  >
     <main class="practice-layout">
       <section
         class="info-strip"
@@ -286,7 +318,6 @@ onBeforeUnmount(() => {
           :next-key="nextKey"
           :next-finger="nextFinger"
           :completed-questions="results.completedQuestions"
-          @next="nextQuestion"
           @reset="resetQuestion"
         />
       </section>

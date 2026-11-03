@@ -1,7 +1,17 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
+import KeyboardView from './components/KeyboardView.vue'
+import { AUTO_ADVANCE_MS } from './appConfig.js'
+import { getQuestion } from './data/questionBank.js'
 import { STORAGE_KEY, STORAGE_VERSION } from './services/storage.js'
+
+async function completeCurrentQuestion(wrapper) {
+  while (wrapper.find('.prompt-text .current').exists()) {
+    const expected = wrapper.get('.prompt-text .current').text()
+    await wrapper.get(`[data-key="${expected}"]`).trigger('click')
+  }
+}
 
 describe('App', () => {
   beforeEach(() => {
@@ -282,6 +292,159 @@ describe('App', () => {
 
     await wrapper.get(`[data-key="${firstExpected}"]`).trigger('click')
     expect(wrapper.get('.feedback').text()).toContain('正解。次は')
+    wrapper.unmount()
+  })
+
+  it('クリア表示を600ms保ってから自動で次の問題へ進み、遷移中の入力を無視する', async () => {
+    const wrapper = mount(App)
+    const firstQuestion = wrapper.get('.prompt-text').text()
+    await completeCurrentQuestion(wrapper)
+
+    expect(wrapper.get('.info-strip').classes()).toContain('complete')
+    expect(wrapper.get('.prompt-text').text()).toContain('✓')
+    expect(wrapper.get('.keyboard-panel').classes()).toContain('complete')
+    expect(wrapper.get('.feedback').text()).toBe('クリア！ 自動で次の問題に進みます')
+    expect(wrapper.find('[data-testid="next-question"]').exists()).toBe(false)
+    expect(wrapper.findAll('.key').every((key) => key.element.disabled)).toBe(true)
+
+    wrapper.getComponent(KeyboardView).vm.$emit('press', 'x')
+    await wrapper.vm.$nextTick()
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).session.attempts).toBe(1)
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).results.completedQuestions).toBe(1)
+
+    vi.advanceTimersByTime(AUTO_ADVANCE_MS - 1)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.info-strip').classes()).toContain('complete')
+    expect(wrapper.get('.prompt-text').text()).toContain(firstQuestion)
+
+    vi.advanceTimersByTime(1)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.info-strip').classes()).not.toContain('complete')
+    expect(wrapper.get('.prompt-text').text()).not.toBe(firstQuestion)
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).questionIndex).toBe(1)
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).results.completedQuestions).toBe(1)
+    wrapper.unmount()
+  })
+
+  it('やり直し・手・レベル・記号設定の変更で自動遷移予約をキャンセルする', async () => {
+    const cases = [
+      {
+        action: (wrapper) => wrapper.get('[data-testid="reset"]').trigger('click'),
+      },
+      {
+        action: (wrapper) => wrapper.get('[data-testid="hand-right"]').trigger('click'),
+      },
+      {
+        action: (wrapper) => wrapper.get('[data-testid="level-2"]').trigger('click'),
+      },
+      {
+        setup: (wrapper) => wrapper.get('[data-testid="hand-right"]').trigger('click'),
+        action: (wrapper) => wrapper.get('[data-testid="include-symbols"]').setValue(true),
+      },
+    ]
+
+    for (const testCase of cases) {
+      const wrapper = mount(App)
+      if (testCase.setup) await testCase.setup(wrapper)
+      await completeCurrentQuestion(wrapper)
+      await testCase.action(wrapper)
+      const changedQuestion = wrapper.get('.prompt-text').text()
+      vi.advanceTimersByTime(AUTO_ADVANCE_MS)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.get('.prompt-text').text()).toBe(changedQuestion)
+      expect(wrapper.get('.info-strip').classes()).not.toContain('complete')
+      wrapper.unmount()
+      localStorage.clear()
+    }
+  })
+
+  it('クリア済みのversion 1保存データを復元しても自動で次へ進み、結果を二重加算しない', async () => {
+    const settings = { hand: 'left', level: 1, includeSymbols: false, layoutVariant: 'jis' }
+    const question = getQuestion(settings, 0)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
+      settings,
+      results: { completedQuestions: 1, correctCount: 1, mistakes: 0, attempts: 1, practiceMs: 250 },
+      questionIndex: 0,
+      session: { question, position: 1, elapsedMs: 250 },
+    }))
+
+    const wrapper = mount(App)
+    expect(wrapper.get('.info-strip').classes()).toContain('complete')
+    vi.advanceTimersByTime(AUTO_ADVANCE_MS)
+    await wrapper.vm.$nextTick()
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    expect(saved.questionIndex).toBe(1)
+    expect(saved.results.completedQuestions).toBe(1)
+    expect(wrapper.get('.info-strip').classes()).not.toContain('complete')
+    wrapper.unmount()
+  })
+
+  it('非表示中に自動遷移しても次問を一時停止し、再表示後に計時を再開する', async () => {
+    const wrapper = mount(App)
+    await completeCurrentQuestion(wrapper)
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    vi.advanceTimersByTime(AUTO_ADVANCE_MS)
+    await wrapper.vm.$nextTick()
+
+    let saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    expect(saved.questionIndex).toBe(1)
+    expect(saved.session.isPaused).toBe(true)
+    expect(saved.session.isComplete).toBe(false)
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    window.dispatchEvent(new Event('pageshow'))
+    vi.advanceTimersByTime(1400)
+    await wrapper.vm.$nextTick()
+    saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:01')
+    expect(saved.results.completedQuestions).toBe(1)
+    wrapper.unmount()
+  })
+
+  it('アンマウント時に自動遷移を含む全タイマーを破棄する', async () => {
+    const wrapper = mount(App)
+    await completeCurrentQuestion(wrapper)
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    wrapper.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('JIS右手の記号キーへ読みやすいVoiceOver名と6.75ピッチを設定する', async () => {
+    const wrapper = mount(App)
+    expect(wrapper.get('.app-shell').attributes('style')).toContain('--keyboard-pitch-count: 5.75')
+    await wrapper.get('[data-testid="hand-right"]').trigger('click')
+    expect(wrapper.get('.app-shell').attributes('style')).toContain('--keyboard-pitch-count: 6.75')
+
+    const labels = {
+      ';': 'セミコロン',
+      ',': 'カンマ',
+      '.': 'ピリオド',
+      '/': 'スラッシュ',
+      '@': 'アットマーク',
+      ':': 'コロン',
+      _: 'アンダースコア',
+    }
+    for (const [key, reading] of Object.entries(labels)) {
+      expect(wrapper.get(`[data-key="${key}"]`).attributes('aria-label')).toContain(`${reading}キー`)
+    }
+    expect(wrapper.get('.finger-legend-embedded').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('保存問題が選択中レイアウトの範囲外なら安全に新規問題へ切り替える', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
+      settings: { hand: 'right', level: 1, includeSymbols: false, layoutVariant: 'us' },
+      questionIndex: 0,
+      session: { question: '@', position: 1, isComplete: true, elapsedMs: 100 },
+    }))
+    const wrapper = mount(App)
+    expect(wrapper.get('.prompt-text').text()).not.toContain('@')
+    expect(wrapper.get('.prompt-text .current').exists()).toBe(true)
+    expect(wrapper.get('.info-strip').classes()).not.toContain('complete')
     wrapper.unmount()
   })
 })

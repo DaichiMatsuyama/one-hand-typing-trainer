@@ -1,10 +1,11 @@
+import { getLayoutPitchCount } from './data/keyboardLayouts.js'
+
 export const LANDSCAPE_LAYOUT = Object.freeze({
   infoStripHeight: 48,
   layoutGap: 2,
   infoStripBorderInline: 2,
   keyboardPanelBorderBlock: 2,
   keyShadowDepth: 4,
-  keyboardPitchCount: 5.75,
   keyPitchMin: 49,
   keyPitchMax: 115,
   keyGapMin: 4,
@@ -18,14 +19,12 @@ export const LANDSCAPE_LAYOUT = Object.freeze({
   stripControlsWidth: 288,
   stripCompactControlsWidth: 272,
   stripPromptMinimumWidth: 186,
-  stripCompletePromptMinimumWidth: 143,
   stripStatsWidth: 182,
   stripCompactStatsWidth: 112,
   stripActionWidth: 50,
   stripGridGap: 3,
   stripInlinePadding: 2,
   stripResultGap: 3,
-  stripActionGap: 3,
   stripCompactGridGap: 2,
   stripCompactInlinePadding: 1,
   stripCompactResultGap: 1,
@@ -60,7 +59,13 @@ export function estimatePromptWidth(characterCount = 10) {
  * 上部情報ストリップ型の横画面レイアウトを数値化する。
  * 単位はCSS px（iPhoneではpt相当）。
  */
-export function calculateLandscapeLayout({ width, height, safeArea = {} }) {
+export function calculateLandscapeLayout({
+  width,
+  height,
+  safeArea = {},
+  hand = 'left',
+  layoutVariant = 'jis',
+}) {
   const safe = {
     top: safeArea.top ?? 0,
     right: safeArea.right ?? 0,
@@ -79,7 +84,8 @@ export function calculateLandscapeLayout({ width, height, safeArea = {} }) {
   const keyboardAreaHeight = availableHeight - config.infoStripHeight - config.layoutGap
   const keyboardContentHeight = keyboardAreaHeight - config.keyboardPanelBorderBlock
   const keyboardHeightBudget = keyboardContentHeight - config.keyShadowDepth
-  const widthPitch = availableWidth / config.keyboardPitchCount
+  const keyboardPitchCount = getLayoutPitchCount(hand, layoutVariant)
+  const widthPitch = availableWidth / keyboardPitchCount
   const heightPitch = keyboardHeightBudget / 3
   const keyPitch = clamp(
     config.keyPitchMin,
@@ -92,10 +98,12 @@ export function calculateLandscapeLayout({ width, height, safeArea = {} }) {
     config.keyGapMax,
   )
   const keySize = keyPitch - keyGap
-  const keyboardWidth = config.keyboardPitchCount * keyPitch - keyGap
+  const keyboardWidth = keyboardPitchCount * keyPitch - keyGap
   const keyboardHeight = 3 * keyPitch - keyGap
   const keyboardVisualHeight = keyboardHeight + config.keyShadowDepth
-  const legendWidth = availableWidth - keyboardWidth
+  const legendWidth = hand === 'right'
+    ? 0.75 * keyPitch - keyGap
+    : availableWidth - keyboardWidth
   const stripClientWidth = availableWidth - config.infoStripBorderInline
   const isCompact = availableWidth <= config.compactBreakpoint
   const controlsWidth = isCompact
@@ -113,18 +121,12 @@ export function calculateLandscapeLayout({ width, height, safeArea = {} }) {
     : config.stripResultGap
   const gapsAndPadding = 2 * gridGap + 2 * inlinePadding
   const normalResultWidth = statsWidth + resultGap + config.stripActionWidth
-  const completeResultWidth = isCompact
-    ? 2 * config.stripActionWidth + config.stripActionGap
-    : statsWidth + resultGap + 2 * config.stripActionWidth + config.stripActionGap
   const normalStripWidth = controlsWidth
     + config.stripPromptMinimumWidth
     + normalResultWidth
     + gapsAndPadding
-  const completeStripWidth = controlsWidth
-    + config.stripCompletePromptMinimumWidth
-    + completeResultWidth
-    + gapsAndPadding
-  const requiredStripWidth = Math.max(normalStripWidth, completeStripWidth)
+  const completeStripWidth = normalStripWidth
+  const requiredStripWidth = normalStripWidth
   const promptAvailableWidth = availableWidth
     - config.infoStripBorderInline
     - controlsWidth
@@ -141,6 +143,7 @@ export function calculateLandscapeLayout({ width, height, safeArea = {} }) {
     keyboardAreaHeight,
     keyboardContentHeight,
     keyboardHeightBudget,
+    keyboardPitchCount,
     widthPitch,
     heightPitch,
     keyPitch,

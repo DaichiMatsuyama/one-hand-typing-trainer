@@ -38,11 +38,28 @@ const createCommonLayouts = () => ({
   },
 })
 
-// MVP対象キーはJIS/USで共通。別オブジェクトにして将来の差分追加を容易にする。
+function createJisLayouts() {
+  const layouts = createCommonLayouts()
+  layouts.right.rows[0].keys.push(key('@', 'rightPinky', { isSymbol: true }))
+  layouts.right.rows[1].keys.push(key(':', 'rightPinky', { isSymbol: true }))
+  layouts.right.rows[2].keys.push(key('_', 'rightPinky', { isSymbol: true }))
+  return layouts
+}
+
 export const keyboardLayouts = {
-  jis: createCommonLayouts(),
+  jis: createJisLayouts(),
   us: createCommonLayouts(),
 }
+
+const KEY_SPOKEN_NAMES = Object.freeze({
+  ';': 'セミコロン',
+  ',': 'カンマ',
+  '.': 'ピリオド',
+  '/': 'スラッシュ',
+  '@': 'アットマーク',
+  ':': 'コロン',
+  _: 'アンダースコア',
+})
 
 export function getKeyboardLayout(hand, layoutVariant = 'jis') {
   const variant = keyboardLayouts[layoutVariant] ? layoutVariant : 'jis'
@@ -54,6 +71,16 @@ export function getLayoutKeys(hand, layoutVariant = 'jis', { includeSymbols = tr
   return getKeyboardLayout(hand, layoutVariant).rows
     .flatMap((row) => row.keys)
     .filter((item) => includeSymbols || !item.isSymbol)
+}
+
+export function getLayoutPitchCount(hand, layoutVariant = 'jis') {
+  return Math.max(
+    ...getKeyboardLayout(hand, layoutVariant).rows.map((row) => row.offset + row.keys.length),
+  )
+}
+
+export function getKeySpokenName(value) {
+  return KEY_SPOKEN_NAMES[value] ?? String(value).toUpperCase()
 }
 
 export function getFinger(fingerId) {

@@ -80,19 +80,18 @@ input:focus-visible {
   --key-pitch-max: 115px;
   --key-gap-min: 4px;
   --key-gap-max: 8px;
+  --keyboard-pitch-count: 5.75;
   --shell-inline-min: 6px;
   --shell-block-min: 5px;
   --strip-controls-width: 288px;
   --strip-compact-controls-width: 272px;
   --strip-prompt-min: 186px;
-  --strip-complete-prompt-min: 143px;
   --strip-stats-width: 182px;
   --strip-compact-stats-width: 112px;
   --strip-action-width: 50px;
   --strip-grid-gap: 3px;
   --strip-inline-padding: 2px;
   --strip-result-gap: 3px;
-  --strip-action-gap: 3px;
   --strip-compact-grid-gap: 2px;
   --strip-compact-inline-padding: 1px;
   --strip-compact-result-gap: 1px;
@@ -104,7 +103,7 @@ input:focus-visible {
   );
   --key-pitch-width: calc(
     (100vw - max(var(--shell-inline-min), env(safe-area-inset-left))
-    - max(var(--shell-inline-min), env(safe-area-inset-right))) / 5.75
+    - max(var(--shell-inline-min), env(safe-area-inset-right))) / var(--keyboard-pitch-count)
   );
   /* 115px ≒ iPhone上の19mm。幅か高さが足りない場合だけ縮小する。 */
   --key-pitch: clamp(
@@ -159,10 +158,6 @@ input:focus-visible {
   border-radius: 12px;
   background: rgb(255 253 248 / 94%);
   box-shadow: 0 3px 12px rgb(50 56 63 / 8%);
-}
-
-.info-strip.complete {
-  grid-template-columns: max-content minmax(var(--strip-complete-prompt-min), 1fr) max-content;
 }
 
 .compact-header {
@@ -290,6 +285,21 @@ h1 {
   gap: 0;
 }
 
+.prompt-card.complete .prompt-text {
+  color: #176b46;
+}
+
+.prompt-card.complete .prompt-text span:not(.completion-mark) {
+  color: #176b46;
+}
+
+.completion-mark {
+  margin-right: 0.18em;
+  color: #176b46;
+  font-size: 1.45em;
+  font-weight: 900;
+}
+
 .prompt-heading {
   display: flex;
   flex: 0 0 auto;
@@ -415,7 +425,6 @@ h1 {
   display: flex;
   flex: 0 0 auto;
   justify-content: center;
-  gap: var(--strip-action-gap);
 }
 
 .primary-button,
@@ -468,8 +477,9 @@ h1 {
 }
 
 .keyboard {
+  position: relative;
   flex: 0 0 auto;
-  width: calc((var(--key-pitch) * 5.75) - var(--key-gap));
+  width: calc((var(--key-pitch) * var(--keyboard-pitch-count)) - var(--key-gap));
   max-width: 100%;
 }
 
@@ -512,6 +522,12 @@ h1 {
 .key:disabled {
   cursor: default;
   opacity: 0.72;
+}
+
+.keyboard-panel.complete .key {
+  border-color: #176b46;
+  background: #b8e7cf;
+  opacity: 1;
 }
 
 .key-character {
@@ -593,6 +609,25 @@ h1 {
   font-weight: 750;
 }
 
+.finger-legend-embedded {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: calc((var(--key-pitch) * 0.75) - var(--key-gap));
+  height: var(--key-size);
+  gap: 1px;
+  font-size: clamp(0.5rem, 1.45dvh, 0.62rem);
+}
+
+.finger-legend-embedded .legend-item {
+  gap: 2px;
+}
+
+.finger-legend-embedded .legend-swatch {
+  width: 10px;
+  height: 10px;
+}
+
 .legend-item {
   display: inline-flex;
   align-items: center;
@@ -665,9 +700,6 @@ h1 {
     display: none;
   }
 
-  .result-bar.complete .stats {
-    display: none;
-  }
 }
 
 @media (orientation: portrait) and (max-width: 700px) {
@@ -757,5 +789,10 @@ h1 {
     border-color: var(--danger);
     background: #ff9fa7;
     animation: none !important;
+  }
+
+  .keyboard-panel.complete .key {
+    border-color: #176b46;
+    background: #b8e7cf;
   }
 }

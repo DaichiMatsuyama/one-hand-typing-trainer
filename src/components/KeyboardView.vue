@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { FINGERS, getFinger } from '../data/keyboardLayouts.js'
+import { FINGERS, getFinger, getKeySpokenName } from '../data/keyboardLayouts.js'
 
 const props = defineProps({
   layout: { type: Object, required: true },
@@ -27,13 +27,14 @@ function keyClass(item) {
 
 function keyAriaLabel(item) {
   const homeDescription = item.isHome ? '、ホームポジション' : ''
-  return `${item.value.toUpperCase()}キー、${getFinger(item.finger).label}で押す${homeDescription}`
+  return `${getKeySpokenName(item.value)}キー、${getFinger(item.finger).label}で押す${homeDescription}`
 }
 </script>
 
 <template>
   <section
     class="keyboard-panel"
+    :class="{ complete: disabled }"
     :data-hand="layout.hand"
     :aria-label="`${layout.label}のキーボード`"
   >
@@ -62,9 +63,20 @@ function keyAriaLabel(item) {
             <span v-if="item.isHome" class="home-bump" aria-hidden="true"></span>
           </button>
         </div>
+
+        <div
+          v-if="layout.hand === 'right'"
+          class="finger-legend finger-legend-embedded"
+          aria-label="指の色分け凡例"
+        >
+          <span v-for="finger in legend" :key="finger.id" class="legend-item">
+            <span class="legend-swatch" :class="`finger-${finger.id}`" aria-hidden="true"></span>
+            {{ finger.label }}
+          </span>
+        </div>
       </div>
 
-      <div class="finger-legend" aria-label="指の色分け凡例">
+      <div v-if="layout.hand === 'left'" class="finger-legend" aria-label="指の色分け凡例">
         <span v-for="finger in legend" :key="finger.id" class="legend-item">
           <span class="legend-swatch" :class="`finger-${finger.id}`" aria-hidden="true"></span>
           {{ finger.label }}

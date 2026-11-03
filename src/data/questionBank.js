@@ -115,12 +115,19 @@ function generateQuestionBank({ hand, level, includeSymbols, layoutVariant, cycl
   return questions
 }
 
-function avoidBoundaryDuplicate(questions, previousQuestion, level) {
+function includesSymbol(question, hand, layoutVariant) {
+  const symbols = getLayoutKeys(hand, layoutVariant)
+    .filter((item) => item.isSymbol)
+    .map((item) => item.value)
+  return [...question].some((character) => symbols.includes(character))
+}
+
+function avoidBoundaryDuplicate(questions, previousQuestion, level, hand, layoutVariant) {
   if (!previousQuestion || questions[0] !== previousQuestion) return questions
 
-  const firstHasSymbol = /[;,./]/.test(questions[0])
+  const firstHasSymbol = includesSymbol(questions[0], hand, layoutVariant)
   for (let index = 1; index < questions.length - 1; index += 1) {
-    if (/[;,./]/.test(questions[index]) !== firstHasSymbol) continue
+    if (includesSymbol(questions[index], hand, layoutVariant) !== firstHasSymbol) continue
     const candidate = [...questions]
     const firstQuestion = candidate[0]
     candidate[0] = candidate[index]
@@ -154,7 +161,13 @@ export function createQuestionBank({
   if (normalizedCycle === 0) return questions
 
   const previousQuestions = generateQuestionBank({ ...options, cycle: normalizedCycle - 1 })
-  return avoidBoundaryDuplicate(questions, previousQuestions.at(-1), normalizedLevel)
+  return avoidBoundaryDuplicate(
+    questions,
+    previousQuestions.at(-1),
+    normalizedLevel,
+    hand,
+    layoutVariant,
+  )
 }
 
 export function validateQuestions(questions, { hand = 'left', includeSymbols = false, layoutVariant = 'jis' } = {}) {

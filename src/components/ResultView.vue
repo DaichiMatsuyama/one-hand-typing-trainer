@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { getKeySpokenName } from '../data/keyboardLayouts.js'
 
 const props = defineProps({
   elapsedText: { type: String, required: true },
@@ -12,14 +13,14 @@ const props = defineProps({
   nextFinger: { type: String, default: '' },
 })
 
-defineEmits(['next', 'reset'])
+defineEmits(['reset'])
 
 const nextInstruction = computed(() => (
-  props.nextKey ? `${props.nextKey.toUpperCase()}キーを${props.nextFinger}で押してください` : ''
+  props.nextKey ? `${getKeySpokenName(props.nextKey)}キーを${props.nextFinger}で押してください` : ''
 ))
 
 const liveMessage = computed(() => {
-  if (props.isComplete) return 'クリア！ 次の問題に進めます'
+  if (props.isComplete) return 'クリア！ 自動で次の問題に進みます'
   if (props.feedback?.type === 'incorrect') return `不正解。${nextInstruction.value}`
   if (props.feedback?.type === 'correct') return `正解。次は${nextInstruction.value}`
   return `次は${nextInstruction.value}`
@@ -46,15 +47,6 @@ const liveMessage = computed(() => {
     <div class="result-actions">
       <button type="button" class="secondary-button" data-testid="reset" @click="$emit('reset')">
         やり直す
-      </button>
-      <button
-        v-if="isComplete"
-        type="button"
-        class="primary-button"
-        data-testid="next-question"
-        @click="$emit('next')"
-      >
-        次の問題
       </button>
     </div>
   </section>
