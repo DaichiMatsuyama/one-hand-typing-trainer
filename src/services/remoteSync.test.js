@@ -1,6 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildCompletionRecord } from './completionRecord.js'
-import { MAX_OUTBOX, OUTBOX_KEY, SEND_BATCH, createRemoteSync, loadOutbox } from './remoteSync.js'
+import {
+  MAX_OUTBOX,
+  MAX_RUN_REJECTED,
+  MAX_RUN_OUTBOX,
+  OUTBOX_KEY,
+  RUN_OUTBOX_KEY,
+  RUN_REJECTED_KEY,
+  SEND_BATCH,
+  createRemoteSync,
+  loadOutbox,
+  loadRejectedRuns,
+  loadRunOutbox,
+} from './remoteSync.js'
 
 const ENDPOINT = 'https://script.google.com/macros/s/test/exec'
 const access = { granted: true, code: 'code-1', deviceId: 'dev-1', grantedAt: 1 }
@@ -15,9 +27,10 @@ function memoryStorage() {
 
 const ok = () => ({ ok: true, json: async () => ({ ok: true }) })
 const rec = (id) => ({ id, ts: 't', hand: 'left', level: 1, question: 'a' })
+const runRec = (id) => ({ id, ts: 't', mode: 'free', hand: 'left', level: 1, attempts: 1 })
 
 function setup(overrides = {}) {
-  const storage = memoryStorage()
+  const storage = overrides.storage ?? memoryStorage()
   const fetchImpl = overrides.fetchImpl ?? vi.fn().mockResolvedValue(ok())
   const sync = createRemoteSync({
     endpoint: ENDPOINT,
@@ -34,11 +47,14 @@ describe('remoteSync', () => {
   it('送信先が未設定、またはコード未入力なら何も送らず、キューにも溜めない', async () => {
     const noEndpoint = setup({ endpoint: '' })
     expect(await noEndpoint.sync.recordCompletion(rec('a'))).toBe(false)
+    expect(await noEndpoint.sync.recordRun(runRec('run-a'))).toBe(false)
     expect(noEndpoint.fetchImpl).not.toHaveBeenCalled()
     expect(loadOutbox(noEndpoint.storage)).toEqual([])
+    expect(loadRunOutbox(noEndpoint.storage)).toEqual([])
 
     const noAccess = setup({ getAccess: () => null })
     expect(await noAccess.sync.recordCompletion(rec('a'))).toBe(false)
+    expect(await noAccess.sync.recordRun(runRec('run-a'))).toBe(false)
     expect(noAccess.fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -50,6 +66,179 @@ describe('remoteSync', () => {
     expect(init.headers).toBeUndefined()
     expect(JSON.parse(init.body)).toEqual({ action: 'log', code: 'code-1', deviceId: 'dev-1', records: [rec('a')] })
     expect(loadOutbox(storage)).toEqual([])
+  })
+
+  it('run記録をlog_runとして送り、成功したら第2キューから消える', async () => {
+    const { sync, fetchImpl, storage } = setup()
+    await sync.recordRun(runRec('run-a'))
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(body).toEqual({
+      action: 'log_run', code: 'code-1', deviceId: 'dev-1', records: [runRec('run-a')],
+    })
+    expect(loadRunOutbox(storage)).toEqual([])
+  })
+
+  it('runの通信失敗では第2キューに残し、次の契機で再送する', async () => {
+    const fetchImpl = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue(ok())
+    const { sync, storage } = setup({ fetchImpl })
+    await sync.recordRun(runRec('run-a'))
+    expect(loadRunOutbox(storage).map(({ id }) => id)).toEqual(['run-a'])
+    await sync.flushPending()
+    expect(loadRunOutbox(storage)).toEqual([])
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('2つのキューを1バッチずつ交互に送る', async () => {
+    const { sync, fetchImpl, storage } = setup()
+    const completions = Array.from({ length: SEND_BATCH + 1 }, (_, index) => rec(`q-${index}`))
+    const runs = Array.from({ length: SEND_BATCH + 2 }, (_, index) => runRec(`run-${index}`))
+    storage.setItem(OUTBOX_KEY, JSON.stringify(completions))
+    storage.setItem(RUN_OUTBOX_KEY, JSON.stringify(runs))
+
+    await sync.flushPending()
+
+    const bodies = fetchImpl.mock.calls.map(([, init]) => JSON.parse(init.body))
+    expect(bodies.map(({ action }) => action)).toEqual(['log', 'log_run', 'log', 'log_run'])
+    expect(bodies.map(({ records }) => records.length)).toEqual([20, 20, 1, 2])
+    expect(loadOutbox(storage)).toEqual([])
+    expect(loadRunOutbox(storage)).toEqual([])
+  })
+
+  it('1問キューが応答中に増え続けてもrunキューを先に1バッチ送る', async () => {
+    const storage = memoryStorage()
+    let logCalls = 0
+    const fetchImpl = vi.fn(async (_url, init) => {
+      const body = JSON.parse(init.body)
+      if (body.action === 'log') {
+        logCalls += 1
+        if (logCalls === 3) return { ok: false, json: async () => ({}) }
+        const queue = loadOutbox(storage)
+        queue.push(rec(`during-${logCalls}`))
+        storage.setItem(OUTBOX_KEY, JSON.stringify(queue))
+      }
+      return ok()
+    })
+    const { sync } = setup({ storage, fetchImpl })
+    storage.setItem(OUTBOX_KEY, JSON.stringify(
+      Array.from({ length: SEND_BATCH }, (_, index) => rec(`q-${index}`)),
+    ))
+    storage.setItem(RUN_OUTBOX_KEY, JSON.stringify([runRec('run-important')]))
+
+    await sync.flushPending()
+
+    const actions = fetchImpl.mock.calls.map(([, init]) => JSON.parse(init.body).action)
+    expect(actions.slice(0, 2)).toEqual(['log', 'log_run'])
+    expect(loadRunOutbox(storage)).toEqual([])
+  })
+
+  it('GASが拒否したrunだけを隔離してキューから除き、他と重複済みは従来どおり除く', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, saved: 1, rejected: 1, rejectedIds: ['run-bad'] }),
+    })
+    const { sync, storage } = setup({ fetchImpl, getNow: () => Date.UTC(2026, 10, 5, 3) })
+    const records = [runRec('run-saved'), runRec('run-bad'), runRec('run-duplicate')]
+    storage.setItem(RUN_OUTBOX_KEY, JSON.stringify(records))
+
+    await sync.flushPending()
+
+    expect(loadRunOutbox(storage)).toEqual([])
+    expect(loadRejectedRuns(storage)).toEqual([{
+      id: 'run-bad',
+      rejectedAt: '2026-11-05T03:00:00.000Z',
+      record: runRec('run-bad'),
+    }])
+  })
+
+  it('隔離runは新しい順で最大20件に保つ', async () => {
+    const fetchImpl = vi.fn(async (_url, init) => {
+      const body = JSON.parse(init.body)
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          saved: 0,
+          rejected: body.records.length,
+          rejectedIds: body.records.map(({ id }) => id),
+        }),
+      }
+    })
+    const { sync, storage } = setup({ fetchImpl, getNow: () => Date.UTC(2026, 10, 5, 3) })
+    const records = Array.from({ length: MAX_RUN_REJECTED + 2 }, (_, index) => runRec(`run-${index}`))
+    storage.setItem(RUN_OUTBOX_KEY, JSON.stringify(records))
+
+    await sync.flushPending()
+
+    expect(loadRejectedRuns(storage).map(({ id }) => id)).toEqual(
+      Array.from({ length: MAX_RUN_REJECTED }, (_, index) => `run-${MAX_RUN_REJECTED + 1 - index}`),
+    )
+  })
+
+  it('隔離キーへの保存に失敗したrunはキューから黙って消さない', async () => {
+    const base = memoryStorage()
+    const storage = {
+      getItem: base.getItem,
+      setItem: (key, value) => {
+        if (key === RUN_REJECTED_KEY) throw new Error('quota exceeded')
+        base.setItem(key, value)
+      },
+    }
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, saved: 0, rejected: 1, rejectedIds: ['run-bad'] }),
+    })
+    const { sync } = setup({ storage, fetchImpl })
+    storage.setItem(RUN_OUTBOX_KEY, JSON.stringify([runRec('run-bad')]))
+
+    await sync.flushPending()
+
+    expect(loadRunOutbox(storage).map(({ id }) => id)).toEqual(['run-bad'])
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('1問ごとのlogではrejectedIdsを隔離に使わず従来どおり成功扱いにする', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, saved: 0, rejected: 1, rejectedIds: ['q-a'] }),
+    })
+    const { sync, storage } = setup({ fetchImpl })
+    storage.setItem(OUTBOX_KEY, JSON.stringify([rec('q-a')]))
+
+    await sync.flushPending()
+
+    expect(loadOutbox(storage)).toEqual([])
+    expect(storage.getItem(RUN_REJECTED_KEY)).toBeNull()
+  })
+
+  it('sheet_header_mismatchは一時エラーとしてrunキューを残して再送する', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true, json: async () => ({ ok: false, error: 'sheet_header_mismatch' }),
+      })
+      .mockResolvedValue(ok())
+    const { sync, storage } = setup({ fetchImpl })
+
+    await sync.recordRun(runRec('run-a'))
+    expect(loadRunOutbox(storage).map(({ id }) => id)).toEqual(['run-a'])
+    expect(loadRejectedRuns(storage)).toEqual([])
+    await sync.flushPending()
+    expect(loadRunOutbox(storage)).toEqual([])
+  })
+
+  it('どちらかのコードがrejectedになったら両キューの再送をそのセッション中止める', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: false, error: 'invalid' }) })
+    const { sync, storage } = setup({ fetchImpl })
+    storage.setItem(OUTBOX_KEY, JSON.stringify([rec('q-a')]))
+    storage.setItem(RUN_OUTBOX_KEY, JSON.stringify([runRec('run-a')]))
+
+    await sync.flushPending()
+    await sync.flushPending()
+    await sync.recordRun(runRec('run-b'))
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(loadOutbox(storage).map(({ id }) => id)).toEqual(['q-a'])
+    expect(loadRunOutbox(storage).map(({ id }) => id)).toEqual(['run-a', 'run-b'])
   })
 
   it('通信失敗・サーバー異常ではキューに残し、次の機会に再送して一度だけ届く', async () => {
@@ -115,6 +304,15 @@ describe('remoteSync', () => {
     expect(queue[0].id).toBe('r10')
   })
 
+  it('runキューは100件を上限に古いものから捨てる', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('offline'))
+    const { sync, storage } = setup({ fetchImpl })
+    for (let i = 0; i < MAX_RUN_OUTBOX + 10; i += 1) await sync.recordRun(runRec(`run-${i}`))
+    const queue = loadRunOutbox(storage)
+    expect(queue).toHaveLength(MAX_RUN_OUTBOX)
+    expect(queue[0].id).toBe('run-10')
+  })
+
   it('送信中に追加された記録を失わない', async () => {
     let release
     const gate = new Promise((resolve) => { release = resolve })
@@ -134,6 +332,24 @@ describe('remoteSync', () => {
     const sentIds = fetchImpl.mock.calls.flatMap(([, init]) => JSON.parse(init.body).records.map((r) => r.id))
     expect(sentIds).toContain('a')
     expect(sentIds).toContain('b')
+  })
+
+  it('1問の送信中に追加されたrunも共有Promise内で続けて送る', async () => {
+    let release
+    const gate = new Promise((resolve) => { release = resolve })
+    const fetchImpl = vi.fn()
+      .mockImplementationOnce(async () => { await gate; return ok() })
+      .mockResolvedValue(ok())
+    const { sync, storage } = setup({ fetchImpl })
+    const completion = sync.recordCompletion(rec('q-a'))
+    await Promise.resolve()
+    const run = sync.recordRun(runRec('run-a'))
+    release()
+    await Promise.all([completion, run])
+
+    expect(fetchImpl.mock.calls.map(([, init]) => JSON.parse(init.body).action)).toEqual(['log', 'log_run'])
+    expect(loadOutbox(storage)).toEqual([])
+    expect(loadRunOutbox(storage)).toEqual([])
   })
 
   it('送信中のflushPendingを再度呼ぶと、二重送信せず同じ完了を待つ', async () => {
@@ -185,6 +401,8 @@ describe('remoteSync', () => {
     expect(loadOutbox(storage)).toEqual([])
     storage.setItem(OUTBOX_KEY, JSON.stringify([1, null, { id: 'x' }, { noId: true }]))
     expect(loadOutbox(storage).map((r) => r.id)).toEqual(['x'])
+    storage.setItem(RUN_OUTBOX_KEY, '{oops')
+    expect(loadRunOutbox(storage)).toEqual([])
   })
 
   it('start()でオンライン復帰・画面再表示時に再送し、停止で解除される', async () => {

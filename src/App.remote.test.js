@@ -3,12 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sync = vi.hoisted(() => ({
   recordCompletion: vi.fn(),
+  recordRun: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
 }))
 
 vi.mock('./services/remoteSync.js', () => ({
-  remoteSync: { recordCompletion: sync.recordCompletion, start: sync.start },
+  remoteSync: { recordCompletion: sync.recordCompletion, recordRun: sync.recordRun, start: sync.start },
 }))
 
 const { default: App } = await import('./App.vue')
@@ -21,6 +22,7 @@ describe('App から練習記録を送る', () => {
     vi.useFakeTimers()
     vi.setSystemTime(100_000)
     sync.recordCompletion.mockReset().mockResolvedValue(true)
+    sync.recordRun.mockReset().mockResolvedValue(true)
     sync.start.mockReset().mockReturnValue(sync.stop)
     sync.stop.mockReset()
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
@@ -87,6 +89,36 @@ describe('App から練習記録を送る', () => {
     await wrapper.get('[data-testid="reset"]').trigger('click')
     expect(sync.recordCompletion).not.toHaveBeenCalled()
     wrapper.unmount()
+  })
+
+  it('練習終了時に履歴と同じIDのrunを一度だけ送り、設定へ戻る場合は送らない', async () => {
+    const wrapper = mount(App)
+    await startPractice(wrapper)
+    await completeCurrentQuestion(wrapper)
+    await wrapper.get('[data-testid="menu-button"]').trigger('click')
+    await wrapper.get('[data-testid="menu-finish"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-yes"]').trigger('click')
+
+    expect(sync.recordRun).toHaveBeenCalledTimes(1)
+    const sent = sync.recordRun.mock.calls[0][0]
+    const history = JSON.parse(localStorage.getItem('one-hand-typing-trainer:history:v1'))
+    expect(sent.id).toBe(history[0].id)
+    expect(sent).toMatchObject({ attempts: 1, endedBy: 'ended', rankVersion: null })
+    expect(wrapper.find('[data-testid="run-result"]').exists()).toBe(true)
+    wrapper.unmount()
+
+    localStorage.clear()
+    sync.recordRun.mockClear()
+    const abandoned = mount(App)
+    await startPractice(abandoned)
+    const expected = abandoned.get('.prompt-text .current').text()
+    const wrong = abandoned.findAll('.key').find((key) => key.attributes('data-key') !== expected)
+    await wrong.trigger('click')
+    await abandoned.get('[data-testid="menu-button"]').trigger('click')
+    await abandoned.get('[data-testid="menu-to-settings"]').trigger('click')
+    await abandoned.get('[data-testid="confirm-yes"]').trigger('click')
+    expect(sync.recordRun).not.toHaveBeenCalled()
+    abandoned.unmount()
   })
 
   it('送信が失敗しても(例外・reject)練習は止まらず、クリア処理が続く', async () => {

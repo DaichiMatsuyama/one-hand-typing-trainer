@@ -3,6 +3,7 @@
  *
  * - action "verify":        アクセスコードが正しいか確認する
  * - action "log":           練習記録(1問クリアごと)をシートに追記する
+ * - action "log_run":       練習記録(runごと)をrunsシートに追記する
  * - action "stats":         その端末の成績(振り返り画面用の集計)を返す
  * - action "admin_devices": 管理者用。端末の一覧を返す(要 ADMIN_CODE)
  * - action "admin_stats":   管理者用。指定した端末の成績を返す(要 ADMIN_CODE)
@@ -17,6 +18,14 @@ var HEADERS = [
   'layout', 'question', 'durationMs', 'attempts', 'mistakes', 'wrong',
 ];
 var MAX_RECORDS_PER_REQUEST = 50;
+var RUN_SHEET_NAME = 'runs';
+var RUN_HEADERS = [
+  'receivedAt', 'id', 'ts', 'deviceId', 'mode', 'hand', 'level', 'includeSymbols',
+  'layout', 'targetCount', 'timeLimitSec', 'homePosition', 'endedBy', 'activeMs',
+  'inputMs', 'completedQuestions', 'correctCount', 'mistakes', 'attempts', 'accuracy',
+  'kpm', 'menuOpenCount', 'rankVersion', 'appVersion',
+];
+var MAX_RUNS_PER_REQUEST = 20;
 // 間違ったコードが短時間に続いたら、確認を一時的に止める(総当たり対策)
 var MAX_FAILS = 30;
 var FAIL_WINDOW_SECONDS = 300;
@@ -28,6 +37,7 @@ var QUESTION_PATTERN = /^[a-z;,./@:_]{1,40}$/;
 var WRONG_KEY_PATTERN = /^[a-z;,./@:_]$/;
 var EARLIEST_RECORD_MS = Date.UTC(2020, 0, 1);
 var MAX_FUTURE_RECORD_MS = 24 * 60 * 60 * 1000;
+var APP_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,40}$/;
 
 function doPost(e) {
   var body;
@@ -50,6 +60,7 @@ function doPost(e) {
 
   if (body.action === 'verify') return respond_({ ok: true });
   if (body.action === 'log') return handleLog_(body);
+  if (body.action === 'log_run') return handleRunLog_(body);
   if (body.action === 'stats') {
     var deviceId = validDeviceId_(body.deviceId);
     if (!deviceId) return respond_({ ok: false, error: 'bad_request' });
@@ -102,7 +113,7 @@ function handleLog_(body) {
     var lock = LockService.getScriptLock();
     lock.waitLock(10000);
     try {
-      var sheet = getSheet_();
+      var sheet = getSheet_(SHEET_NAME, HEADERS);
       var lastRow = sheet.getLastRow();
       var existingIds = new Set();
       if (lastRow >= 2) {
@@ -128,6 +139,78 @@ function handleLog_(body) {
     }
   }
   return respond_({ ok: true, saved: rows.length, rejected: rejected });
+}
+
+function handleRunLog_(body) {
+  var deviceId = validDeviceId_(body.deviceId);
+  if (!deviceId) return respond_({ ok: false, error: 'bad_request' });
+
+  var sourceRecords = Array.isArray(body.records) ? body.records : [];
+  var records = sourceRecords.slice(0, MAX_RUNS_PER_REQUEST);
+  var rejected = Math.max(0, sourceRecords.length - MAX_RUNS_PER_REQUEST);
+  var rejectedIds = [];
+  var candidates = [];
+
+  sourceRecords.slice(MAX_RUNS_PER_REQUEST).forEach(function (record) {
+    addRejectedId_(rejectedIds, record);
+  });
+
+  records.forEach(function (record) {
+    var normalized = normalizeRunRecord_(record);
+    if (!normalized) {
+      rejected += 1;
+      addRejectedId_(rejectedIds, record);
+      return;
+    }
+    candidates.push(normalized);
+  });
+
+  var rows = [];
+  if (candidates.length > 0) {
+    var lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+      var sheet = getSheet_(RUN_SHEET_NAME, RUN_HEADERS, true);
+      if (!sheet) return respond_({ ok: false, error: 'sheet_header_mismatch' });
+      var lastRow = sheet.getLastRow();
+      var existingIds = new Set();
+      if (lastRow >= 2) {
+        sheet.getRange(2, 2, lastRow - 1, 1).getValues().forEach(function (row) {
+          existingIds.add(normalizeText_(row[0]));
+        });
+      }
+      candidates.forEach(function (record) {
+        if (existingIds.has(record.id)) return;
+        existingIds.add(record.id);
+        rows.push([
+          new Date(), text_(record.id, 64), text_(record.ts, 40), text_(deviceId, 64),
+          text_(record.mode, 20), text_(record.hand, 10), record.level,
+          record.includeSymbols, text_(record.layout, 10), record.targetCount,
+          record.timeLimitSec, record.homePosition, text_(record.endedBy, 20),
+          record.activeMs, record.inputMs, record.completedQuestions, record.correctCount,
+          record.mistakes, record.attempts, record.accuracy, record.kpm,
+          record.menuOpenCount, record.rankVersion, text_(record.appVersion, 40),
+        ]);
+      });
+      if (rows.length > 0) {
+        sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, RUN_HEADERS.length).setValues(rows);
+      }
+    } finally {
+      lock.releaseLock();
+    }
+  }
+  return respond_({
+    ok: true,
+    saved: rows.length,
+    rejected: rejected,
+    rejectedIds: rejectedIds,
+  });
+}
+
+function addRejectedId_(ids, record) {
+  if (ids.length >= MAX_RUNS_PER_REQUEST || !isPlainObject_(record)
+    || typeof record.id !== 'string' || ids.indexOf(record.id) >= 0) return;
+  ids.push(record.id);
 }
 
 function isPlainObject_(value) {
@@ -181,6 +264,73 @@ function normalizeRecord_(record) {
   };
 }
 
+function normalizeRunRecord_(record) {
+  if (!isPlainObject_(record)) return null;
+  if (typeof record.id !== 'string' || !RECORD_ID_PATTERN.test(record.id)) return null;
+  if (typeof record.ts !== 'string') return null;
+  var timestamp = Date.parse(record.ts);
+  if (!isFinite(timestamp) || timestamp < EARLIEST_RECORD_MS || timestamp > Date.now() + MAX_FUTURE_RECORD_MS) return null;
+  if (record.mode !== 'free' && record.mode !== 'timeAttack' && record.mode !== 'timeLimit') return null;
+  if (record.hand !== 'left' && record.hand !== 'right') return null;
+  if (!isIntegerInRange_(record.level, 1, 3)) return null;
+  if (typeof record.includeSymbols !== 'boolean') return null;
+  if (record.layout !== 'jis' && record.layout !== 'us') return null;
+  if (record.mode === 'free'
+    && (record.targetCount !== null || record.timeLimitSec !== null)) return null;
+  if (record.mode === 'timeAttack'
+    && (!isIntegerInRange_(record.targetCount, 1, 1000) || record.timeLimitSec !== null)) return null;
+  if (record.mode === 'timeLimit'
+    && (!isIntegerInRange_(record.timeLimitSec, 1, 3600) || record.targetCount !== null)) return null;
+  if (typeof record.homePosition !== 'boolean') return null;
+  if (record.endedBy !== 'completed' && record.endedBy !== 'timeUp' && record.endedBy !== 'ended') return null;
+  if (record.endedBy === 'completed' && record.mode !== 'timeAttack') return null;
+  if (record.endedBy === 'timeUp' && record.mode !== 'timeLimit') return null;
+  if (!isIntegerInRange_(record.activeMs, 0, 86400000)) return null;
+  if (!isIntegerInRange_(record.inputMs, 0, 86400000)) return null;
+  if (record.inputMs > record.activeMs + 1000) return null;
+  if (!isIntegerInRange_(record.completedQuestions, 0, 100000)) return null;
+  if (!isIntegerInRange_(record.correctCount, 0, 100000)) return null;
+  if (!isIntegerInRange_(record.mistakes, 0, 100000)) return null;
+  if (!isIntegerInRange_(record.attempts, 1, 100000)
+    || record.correctCount + record.mistakes !== record.attempts) return null;
+  var expectedAccuracy = Math.round(record.correctCount / record.attempts * 100);
+  if (record.accuracy !== expectedAccuracy) return null;
+  if (record.kpm !== null) {
+    if (record.inputMs < 1000 || !isIntegerInRange_(record.kpm, 0, 6000001)) return null;
+    var expectedKpm = Math.round(record.correctCount / (record.inputMs / 60000));
+    if (Math.abs(record.kpm - expectedKpm) > 1) return null;
+  }
+  if (!isIntegerInRange_(record.menuOpenCount, 0, 1000)) return null;
+  if (record.rankVersion !== undefined && record.rankVersion !== null
+    && !isIntegerInRange_(record.rankVersion, 0, 999)) return null;
+
+  return {
+    id: record.id,
+    ts: record.ts,
+    mode: record.mode,
+    hand: record.hand,
+    level: record.level,
+    includeSymbols: record.includeSymbols,
+    layout: record.layout,
+    targetCount: record.targetCount,
+    timeLimitSec: record.timeLimitSec,
+    homePosition: record.homePosition,
+    endedBy: record.endedBy,
+    activeMs: record.activeMs,
+    inputMs: record.inputMs,
+    completedQuestions: record.completedQuestions,
+    correctCount: record.correctCount,
+    mistakes: record.mistakes,
+    attempts: record.attempts,
+    accuracy: record.accuracy,
+    kpm: record.kpm,
+    menuOpenCount: record.menuOpenCount,
+    rankVersion: record.rankVersion === undefined || record.rankVersion === null ? '' : record.rankVersion,
+    appVersion: typeof record.appVersion === 'string' && APP_VERSION_PATTERN.test(record.appVersion)
+      ? record.appVersion : 'unknown',
+  };
+}
+
 // 固定ウィンドウの失敗回数を、短時間だけスクリプトロックで保護する。
 // ロックを取れない場合は、並行リクエストによる回数制限のすり抜けを避けるため安全側でlockedにする。
 function checkCode_(provided, expected, cache, deferReset) {
@@ -220,14 +370,22 @@ function readFailureState_(cache, now) {
   return state;
 }
 
-function getSheet_() {
+function getSheet_(sheetName, headers, validateHeaders) {
+  sheetName = sheetName || SHEET_NAME;
+  headers = headers || HEADERS;
   var props = PropertiesService.getScriptProperties();
   var sheetId = props.getProperty('SHEET_ID');
   var spreadsheet = sheetId ? SpreadsheetApp.openById(sheetId) : SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = spreadsheet.getSheetByName(SHEET_NAME) || spreadsheet.insertSheet(SHEET_NAME);
+  var sheet = spreadsheet.getSheetByName(sheetName) || spreadsheet.insertSheet(sheetName);
   if (sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     sheet.setFrozenRows(1);
+  } else if (validateHeaders) {
+    if (sheet.getLastColumn() !== headers.length) return null;
+    var actualHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+    for (var i = 0; i < headers.length; i++) {
+      if (actualHeaders[i] !== headers[i]) return null;
+    }
   }
   return sheet;
 }
@@ -265,7 +423,7 @@ function normalizeText_(value) {
 
 // シートの全行を読み、deviceIdを指定したらその端末の分だけを返す
 function readRecords_(deviceId) {
-  var sheet = getSheet_();
+  var sheet = getSheet_(SHEET_NAME, HEADERS);
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   var values = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();

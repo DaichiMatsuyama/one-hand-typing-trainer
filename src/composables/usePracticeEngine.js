@@ -13,6 +13,7 @@ import {
 } from '../domain/practiceSession.js'
 import { summarizeRunStats } from '../domain/run.js'
 import { formatDuration, getTotalStats } from '../domain/stats.js'
+import { createDeviceId } from '../services/access.js'
 import { buildCompletionRecord } from '../services/completionRecord.js'
 import { appendHistory } from '../services/history.js'
 import { remoteSync } from '../services/remoteSync.js'
@@ -232,6 +233,16 @@ export function usePracticeEngine({
     }
   }
 
+  // 1回の練習結果を送信キューへ。履歴と同じIDを使い、送信失敗は画面遷移へ影響させない。
+  function reportRun(record) {
+    try {
+      const sending = syncService.recordRun({ ...record, rankVersion: null })
+      sending?.catch?.(() => {})
+    } catch {
+      // 記録の失敗で練習を止めない
+    }
+  }
+
   function cancelAutoAdvance() {
     clearTimeout(autoAdvanceTimer)
     autoAdvanceTimer = undefined
@@ -344,8 +355,9 @@ export function usePracticeEngine({
     beginQuestion(null, timestamp)
   }
 
-  function buildHistoryRecord(summary, timestamp) {
+  function buildHistoryRecord(summary, timestamp, id) {
     return {
+      id,
       ts: new Date(timestamp).toISOString(),
       mode: summary.mode,
       hand: settings.value.hand,
@@ -393,7 +405,11 @@ export function usePracticeEngine({
       cancelAutoAdvance()
       session.value = pausePracticeSession(session.value, timestamp)
       run.value = { ...run.value, activeMs: summary.activeMs, activeStartedAt: null, summary }
-      if (summary.attempts > 0) appendHistory(buildHistoryRecord(summary, timestamp), storage)
+      if (summary.attempts > 0) {
+        const record = buildHistoryRecord(summary, timestamp, createDeviceId())
+        appendHistory(record, storage)
+        reportRun(record)
+      }
     }
     updatePauseReasons([...pauseReasons].map((reason) => [reason, false]), timestamp)
     snapshot(timestamp)
@@ -651,6 +667,7 @@ export function usePracticeEngine({
     scheduleAutoAdvance,
     preservePendingSession,
     reportCompletion,
+    reportRun,
     setPauseReason,
     attach,
     detach,

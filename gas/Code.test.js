@@ -13,7 +13,7 @@ function createEnvironment({ accessCode = 'secret-code-123', adminCode = null } 
   const properties = accessCode ? { ACCESS_CODE: accessCode } : {}
   if (adminCode) properties.ADMIN_CODE = adminCode
   const cache = new Map()
-  const sheetRows = []
+  const sheets = new Map()
   const calls = { tryLock: 0, waitLock: 0, lockReleased: 0 }
   let currentNow = NOW
 
@@ -26,24 +26,32 @@ function createEnvironment({ accessCode = 'secret-code-123', adminCode = null } 
     static now() { return currentNow }
   }
 
-  const sheet = {
-    getLastRow: () => sheetRows.length,
-    getRange: (row, column, numRows, numColumns) => ({
-      setValues: (values) => {
-        values.forEach((value, index) => { sheetRows[row - 1 + index] = value })
-        expect(column).toBe(1)
-        expect(numColumns).toBe(values[0].length)
-        expect(numRows).toBe(values.length)
-      },
-      getValues: () => sheetRows
-        .slice(row - 1, row - 1 + numRows)
-        .map((cells) => cells.slice(column - 1, column - 1 + numColumns)),
-    }),
-    setFrozenRows: () => {},
+  const createSheet = (name) => {
+    const rows = []
+    const sheet = {
+      getLastRow: () => rows.length,
+      getLastColumn: () => rows.reduce((max, row) => Math.max(max, row.length), 0),
+      getRange: (row, column, numRows, numColumns) => ({
+        setValues: (values) => {
+          values.forEach((value, index) => { rows[row - 1 + index] = value })
+          expect(column).toBe(1)
+          expect(numColumns).toBe(values[0].length)
+          expect(numRows).toBe(values.length)
+        },
+        getValues: () => rows
+          .slice(row - 1, row - 1 + numRows)
+          .map((cells) => cells.slice(column - 1, column - 1 + numColumns)),
+      }),
+      setFrozenRows: () => {},
+    }
+    sheets.set(name, { rows, sheet })
+    return sheet
   }
+  const sheet = createSheet('records')
+  const sheetRows = sheets.get('records').rows
   const spreadsheet = {
-    getSheetByName: () => sheet,
-    insertSheet: () => sheet,
+    getSheetByName: (name) => sheets.get(name)?.sheet ?? null,
+    insertSheet: (name) => createSheet(name),
   }
 
   const context = {
@@ -79,9 +87,15 @@ function createEnvironment({ accessCode = 'secret-code-123', adminCode = null } 
   runInNewContext(source, context)
   const post = (body) => JSON.parse(context.doPost({ postData: { contents: typeof body === 'string' ? body : JSON.stringify(body) } }).text)
   // 先頭(1行目)は見出し行。データは2行目から
-  const dataRows = () => sheetRows.slice(1)
+  const dataRows = (name = 'records') => (sheets.get(name)?.rows ?? []).slice(1)
+  const rowsFor = (name) => sheets.get(name)?.rows ?? []
+  const seedSheet = (name, rows) => {
+    if (!sheets.has(name)) createSheet(name)
+    const target = sheets.get(name).rows
+    rows.forEach((row) => target.push([...row]))
+  }
   const advanceTime = (ms) => { currentNow += ms }
-  return { post, sheetRows, dataRows, calls, cache, advanceTime }
+  return { post, sheetRows, dataRows, rowsFor, seedSheet, calls, cache, advanceTime }
 }
 
 const record = (overrides = {}) => ({
@@ -97,6 +111,43 @@ const record = (overrides = {}) => ({
   mistakes: 1,
   wrong: [['k', 'l']],
   ...overrides,
+})
+
+const runRecord = (overrides = {}) => ({
+  id: 'run-0001',
+  ts: '2026-11-03T03:00:00.000Z',
+  mode: 'timeAttack',
+  hand: 'right',
+  level: 2,
+  includeSymbols: true,
+  layout: 'jis',
+  targetCount: 10,
+  timeLimitSec: null,
+  homePosition: false,
+  endedBy: 'completed',
+  activeMs: 12_345,
+  inputMs: 10_000,
+  completedQuestions: 10,
+  correctCount: 40,
+  mistakes: 2,
+  attempts: 42,
+  accuracy: 95,
+  kpm: 240,
+  menuOpenCount: 1,
+  rankVersion: null,
+  appVersion: 'abc1234',
+  ...overrides,
+})
+
+const RUN_HEADERS = [
+  'receivedAt', 'id', 'ts', 'deviceId', 'mode', 'hand', 'level', 'includeSymbols',
+  'layout', 'targetCount', 'timeLimitSec', 'homePosition', 'endedBy', 'activeMs',
+  'inputMs', 'completedQuestions', 'correctCount', 'mistakes', 'attempts', 'accuracy',
+  'kpm', 'menuOpenCount', 'rankVersion', 'appVersion',
+]
+
+const runResponse = (saved, rejected = 0, rejectedIds = []) => ({
+  ok: true, saved, rejected, rejectedIds,
 })
 
 describe('Code.gs', () => {
@@ -211,6 +262,201 @@ describe('Code.gs', () => {
     expect(env.post({ action: 'log', code: 'secret-code-123', deviceId: 'dev-mine-01', records }))
       .toEqual({ ok: true, saved: 50, rejected: 10 })
     expect(env.dataRows()).toHaveLength(50)
+  })
+})
+
+describe('Code.gs runごとの記録', () => {
+  let env
+  beforeEach(() => {
+    env = createEnvironment()
+  })
+
+  const postRuns = (records, overrides = {}) => ({
+    action: 'log_run', code: 'secret-code-123', deviceId: 'dev-mine-01', records, ...overrides,
+  })
+
+  it('runsシートを作成し、指定された24列の順でrunを保存する', () => {
+    expect(env.post(postRuns([runRecord()]))).toEqual(runResponse(1))
+    expect(env.rowsFor('runs')[0]).toEqual(RUN_HEADERS)
+    const row = env.dataRows('runs')[0]
+    expect(row[0]).toBeInstanceOf(Date)
+    expect(row.slice(1)).toEqual([
+      'run-0001', '2026-11-03T03:00:00.000Z', 'dev-mine-01', 'timeAttack', 'right', 2,
+      true, 'jis', 10, null, false, 'completed', 12_345, 10_000, 10, 40, 2, 42, 95,
+      240, 1, '', 'abc1234',
+    ])
+  })
+
+  it('nullable項目とrankVersion未指定を空欄として保存し、不正なappVersionはunknownへ置換する', () => {
+    const withoutRank = runRecord({
+      mode: 'free', targetCount: null, timeLimitSec: null, endedBy: 'ended',
+      kpm: null, appVersion: '=bad',
+    })
+    delete withoutRank.rankVersion
+    expect(env.post(postRuns([withoutRank]))).toEqual(runResponse(1))
+    const row = env.dataRows('runs')[0]
+    expect(row[9]).toBeNull()
+    expect(row[10]).toBeNull()
+    expect(row[20]).toBeNull()
+    expect(row[22]).toBe('')
+    expect(row[23]).toBe('unknown')
+  })
+
+  it.each([
+    ['freeの手動終了', runRecord({ mode: 'free', targetCount: null, endedBy: 'ended' })],
+    ['タイムアタック1問の完了', runRecord({ targetCount: 1 })],
+    ['タイムアタック1000問の途中終了', runRecord({ targetCount: 1000, endedBy: 'ended' })],
+    ['制限時間1秒の時間切れ', runRecord({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 1, endedBy: 'timeUp',
+    })],
+    ['制限時間3600秒の途中終了', runRecord({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 3600, endedBy: 'ended',
+    })],
+    ['inputMsがactiveMsより1000ms長い境界', runRecord({ activeMs: 9000 })],
+    ['計算可能でもnullのKPM', runRecord({ kpm: null })],
+    ['KPMの丸め差-1', runRecord({ kpm: 239 })],
+    ['KPMの丸め差+1', runRecord({ kpm: 241 })],
+  ])('%sは受理する', (_label, valid) => {
+    expect(env.post(postRuns([valid]))).toEqual(runResponse(1))
+  })
+
+  it.each([
+    ['レコード本体', null],
+    ['id', runRecord({ id: 'short' })],
+    ['tsの型', runRecord({ ts: 123 })],
+    ['tsの下限', runRecord({ ts: '2019-12-31T23:59:59.000Z' })],
+    ['tsの未来上限', runRecord({ ts: '2026-11-04T12:00:01.000Z' })],
+    ['mode', runRecord({ mode: 'speed' })],
+    ['hand', runRecord({ hand: 'both' })],
+    ['level', runRecord({ level: 4 })],
+    ['includeSymbols', runRecord({ includeSymbols: 1 })],
+    ['layout', runRecord({ layout: 'dvorak' })],
+    ['freeのtargetCount', runRecord({ mode: 'free', targetCount: 1, endedBy: 'ended' })],
+    ['freeのtimeLimitSec', runRecord({
+      mode: 'free', targetCount: null, timeLimitSec: 1, endedBy: 'ended',
+    })],
+    ['timeAttackのtargetCount下限', runRecord({ targetCount: 0 })],
+    ['timeAttackのtargetCount上限', runRecord({ targetCount: 1001 })],
+    ['timeAttackのtimeLimitSec', runRecord({ timeLimitSec: 30 })],
+    ['timeLimitのtimeLimitSec下限', runRecord({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 0, endedBy: 'timeUp',
+    })],
+    ['timeLimitのtimeLimitSec上限', runRecord({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 3601, endedBy: 'timeUp',
+    })],
+    ['timeLimitのtargetCount', runRecord({
+      mode: 'timeLimit', targetCount: 10, timeLimitSec: 30, endedBy: 'timeUp',
+    })],
+    ['homePosition', runRecord({ homePosition: 'no' })],
+    ['endedBy', runRecord({ endedBy: 'abandoned' })],
+    ['freeのcompleted', runRecord({
+      mode: 'free', targetCount: null, endedBy: 'completed',
+    })],
+    ['timeLimitのcompleted', runRecord({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 30, endedBy: 'completed',
+    })],
+    ['timeAttackのtimeUp', runRecord({ endedBy: 'timeUp' })],
+    ['activeMs', runRecord({ activeMs: 86_400_001 })],
+    ['inputMsの整数', runRecord({ inputMs: 1.5 })],
+    ['inputMsとactiveMsの差', runRecord({ activeMs: 8999 })],
+    ['completedQuestions', runRecord({ completedQuestions: 100_001 })],
+    ['correctCount', runRecord({ correctCount: -1 })],
+    ['attemptsより内訳が多い', runRecord({ correctCount: 41 })],
+    ['attemptsより内訳が少ない', runRecord({ correctCount: 39 })],
+    ['attemptsの下限', runRecord({ attempts: 0, mistakes: 0 })],
+    ['attemptsの整数', runRecord({ attempts: 1.5, mistakes: 0 })],
+    ['accuracyの計算不一致', runRecord({ accuracy: 94 })],
+    ['1秒未満のKPM', runRecord({ activeMs: 999, inputMs: 999, kpm: 2402 })],
+    ['KPMの計算差2', runRecord({ kpm: 242 })],
+    ['menuOpenCount', runRecord({ menuOpenCount: 1001 })],
+    ['rankVersion', runRecord({ rankVersion: 1000 })],
+  ])('%sが不正なrunをrejectedに数える', (_field, invalid) => {
+    const rejectedIds = invalid && typeof invalid.id === 'string' ? [invalid.id] : []
+    expect(env.post(postRuns([invalid]))).toEqual(runResponse(0, 1, rejectedIds))
+    expect(env.dataRows('runs')).toEqual([])
+  })
+
+  it('logと同じアクセスコード・deviceId検証を通す', () => {
+    expect(env.post(postRuns([runRecord()], { code: 'wrong' }))).toEqual({ ok: false, error: 'invalid' })
+    expect(env.post(postRuns([runRecord()], { deviceId: 'short' }))).toEqual({ ok: false, error: 'bad_request' })
+    expect(env.dataRows('runs')).toEqual([])
+  })
+
+  it('既存IDと同一バッチ内の重複を保存しない', () => {
+    expect(env.post(postRuns([runRecord()]))).toEqual(runResponse(1))
+    expect(env.post(postRuns([
+      runRecord(), runRecord({ id: 'run-0002' }), runRecord({ id: 'run-0002' }),
+    ]))).toEqual(runResponse(1))
+    expect(env.dataRows('runs').map((row) => row[1])).toEqual(['run-0001', 'run-0002'])
+  })
+
+  it('数式になり得る文字列をtext_で保護し、保護後のIDも重複判定する', () => {
+    const protectedRecord = runRecord({ id: '-run-0001', appVersion: '-build' })
+    const body = postRuns([protectedRecord], { deviceId: '-dev-0001' })
+    expect(env.post(body)).toEqual(runResponse(1))
+    const row = env.dataRows('runs')[0]
+    expect(row[1]).toBe("'-run-0001")
+    expect(row[3]).toBe("'-dev-0001")
+    expect(row[23]).toBe("'-build")
+    expect(env.post(body)).toEqual(runResponse(0))
+  })
+
+  it('1リクエストは20件までとし、超過分をrejectedに数える', () => {
+    const records = Array.from({ length: 25 }, (_, index) => (
+      runRecord({ id: `run-${String(index).padStart(4, '0')}` })
+    ))
+    expect(env.post(postRuns(records))).toEqual(runResponse(20, 5, [
+      'run-0020', 'run-0021', 'run-0022', 'run-0023', 'run-0024',
+    ]))
+    expect(env.dataRows('runs')).toHaveLength(20)
+  })
+
+  it('records未設定は空バッチとして成功し、runsシートを作らない', () => {
+    expect(env.post(postRuns(undefined))).toEqual(runResponse(0))
+    expect(env.rowsFor('runs')).toEqual([])
+  })
+
+  it('log_runは既存recordsとstatsの結果を変えない', () => {
+    expect(env.post({
+      action: 'log', code: 'secret-code-123', deviceId: 'dev-mine-01', records: [record()],
+    })).toEqual({ ok: true, saved: 1, rejected: 0 })
+    const before = env.post({ action: 'stats', code: 'secret-code-123', deviceId: 'dev-mine-01' })
+    expect(env.post(postRuns([runRecord()]))).toEqual(runResponse(1))
+    const after = env.post({ action: 'stats', code: 'secret-code-123', deviceId: 'dev-mine-01' })
+    expect(after).toEqual(before)
+    expect(env.dataRows()).toHaveLength(1)
+    expect(env.dataRows('runs')).toHaveLength(1)
+  })
+
+  it('拒否IDは取得できたものだけ重複なく最大20件返す', () => {
+    const records = Array.from({ length: 25 }, (_, index) => (
+      runRecord({ id: `bad-${String(index).padStart(4, '0')}`, accuracy: 0 })
+    ))
+    const result = env.post(postRuns(records))
+    expect(result.rejected).toBe(25)
+    expect(result.rejectedIds).toHaveLength(20)
+    expect(result.rejectedIds).toEqual(records.slice(20).concat(records.slice(0, 15)).map(({ id }) => id))
+  })
+
+  it('runsの既存ヘッダーが一致しなければ書き込まずエラーにする', () => {
+    env.seedSheet('runs', [['old', ...RUN_HEADERS.slice(1)]])
+    expect(env.post(postRuns([runRecord()]))).toEqual({ ok: false, error: 'sheet_header_mismatch' })
+    expect(env.rowsFor('runs')).toEqual([['old', ...RUN_HEADERS.slice(1)]])
+  })
+
+  it('recordsの既存ヘッダーは従来どおり検証しない', () => {
+    env.sheetRows.push(['old-header'])
+    expect(env.post({
+      action: 'log', code: 'secret-code-123', deviceId: 'dev-mine-01', records: [record()],
+    })).toEqual({ ok: true, saved: 1, rejected: 0 })
+    expect(env.dataRows()).toHaveLength(1)
+  })
+
+  it('log_runの書き込みをwaitLockで囲み、必ずreleaseLockする', () => {
+    expect(env.post(postRuns([runRecord()]))).toEqual(runResponse(1))
+    expect(env.calls.tryLock).toBe(1)
+    expect(env.calls.waitLock).toBe(1)
+    expect(env.calls.lockReleased).toBe(2)
   })
 })
 

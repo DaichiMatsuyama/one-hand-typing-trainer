@@ -3,23 +3,50 @@ import { loadAccess } from './access.js'
 
 export const OUTBOX_KEY = 'one-hand-typing-trainer:outbox:v1'
 export const MAX_OUTBOX = 300
+export const RUN_OUTBOX_KEY = 'one-hand-typing-trainer:run-outbox:v1'
+export const MAX_RUN_OUTBOX = 100
+export const RUN_REJECTED_KEY = 'one-hand-typing-trainer:run-rejected:v1'
+export const MAX_RUN_REJECTED = 20
 export const SEND_BATCH = 20
 const SEND_TIMEOUT_MS = 15_000
 
-export function loadOutbox(storage = globalThis.localStorage) {
+function loadQueue(key, storage) {
   try {
-    const parsed = JSON.parse(storage?.getItem(OUTBOX_KEY) ?? '[]')
+    const parsed = JSON.parse(storage?.getItem(key) ?? '[]')
     return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object' && typeof item.id === 'string') : []
   } catch {
     return []
   }
 }
 
-function saveOutbox(records, storage) {
+export function loadOutbox(storage = globalThis.localStorage) {
+  return loadQueue(OUTBOX_KEY, storage)
+}
+
+export function loadRunOutbox(storage = globalThis.localStorage) {
+  return loadQueue(RUN_OUTBOX_KEY, storage)
+}
+
+export function loadRejectedRuns(storage = globalThis.localStorage) {
   try {
-    storage?.setItem(OUTBOX_KEY, JSON.stringify(records))
+    const parsed = JSON.parse(storage?.getItem(RUN_REJECTED_KEY) ?? '[]')
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item && typeof item === 'object'
+        && typeof item.id === 'string' && typeof item.rejectedAt === 'string'
+        && item.record && typeof item.record === 'object')
+      : []
+  } catch {
+    return []
+  }
+}
+
+function saveQueue(key, records, storage) {
+  try {
+    storage?.setItem(key, JSON.stringify(records))
+    return true
   } catch {
     // 保存に失敗しても練習は止めない
+    return false
   }
 }
 
@@ -33,6 +60,7 @@ export function createRemoteSync({
   fetchImpl = (...args) => globalThis.fetch(...args),
   getAccess = () => loadAccess(storage),
   win = globalThis.window,
+  getNow = () => Date.now(),
 } = {}) {
   let flushPromise = null
   // コードが拒否されたら、そのセッション中は再送を試みない(キューは残す)
@@ -40,32 +68,63 @@ export function createRemoteSync({
 
   const isEnabled = () => Boolean(endpoint) && Boolean(getAccess())
 
-  async function postBatch(batch, access) {
+  async function postBatch(action, batch, access) {
     const controller = typeof AbortController === 'function' ? new AbortController() : null
     const timeout = controller ? setTimeout(() => controller.abort(), SEND_TIMEOUT_MS) : null
     try {
       const response = await fetchImpl(endpoint, {
         method: 'POST',
-        body: JSON.stringify({ action: 'log', code: access.code, deviceId: access.deviceId, records: batch }),
+        body: JSON.stringify({ action, code: access.code, deviceId: access.deviceId, records: batch }),
         redirect: 'follow',
         signal: controller?.signal,
       })
-      if (!response.ok) return 'error'
+      if (!response.ok) return { status: 'error', rejectedIds: [] }
       const data = await response.json()
-      if (data?.ok === true) return 'ok'
-      if (data?.error === 'invalid') return 'rejected'
-      if (data?.error === 'locked') return 'error'
-      return 'error'
+      if (data?.ok === true) {
+        return {
+          status: 'ok',
+          rejectedIds: action === 'log_run' && Array.isArray(data.rejectedIds)
+            ? data.rejectedIds.filter((id) => typeof id === 'string').slice(0, MAX_RUN_REJECTED)
+            : [],
+        }
+      }
+      if (data?.error === 'invalid') return { status: 'rejected', rejectedIds: [] }
+      return { status: 'error', rejectedIds: [] }
     } catch {
-      return 'error'
+      return { status: 'error', rejectedIds: [] }
     } finally {
       if (timeout) clearTimeout(timeout)
     }
   }
 
+  function quarantineRejected(batch, rejectedIds) {
+    const ids = new Set(rejectedIds)
+    if (ids.size === 0) return ids
+    const existing = loadRejectedRuns(storage)
+    const rejectedAt = new Date(getNow()).toISOString()
+    const newEntries = []
+    const added = new Set()
+    batch.forEach((record) => {
+      if (ids.has(record.id) && !added.has(record.id)) {
+        newEntries.unshift({ id: record.id, rejectedAt, record })
+        added.add(record.id)
+      }
+    })
+    const next = [
+      ...newEntries,
+      ...existing.filter((item) => !added.has(item.id)),
+    ].slice(0, MAX_RUN_REJECTED)
+    return saveQueue(RUN_REJECTED_KEY, next, storage) ? added : new Set()
+  }
+
   function flushPending() {
     if (!isEnabled() || rejected) {
-      return Promise.resolve({ sent: 0, remaining: loadOutbox(storage).length })
+      return Promise.resolve({
+        sent: 0,
+        remaining: loadOutbox(storage).length,
+        runSent: 0,
+        runRemaining: loadRunOutbox(storage).length,
+      })
     }
     // 送信中の呼び出し元も同じ処理の完了を待てるようにする。新しい送信は開始しない。
     if (flushPromise) return flushPromise
@@ -74,23 +133,54 @@ export function createRemoteSync({
       // 空キューでもIIFEを同期完了させず、先にflushPromiseへ共有Promiseを設定する。
       await Promise.resolve()
       let sent = 0
+      let runSent = 0
       try {
+        const drains = [
+          { action: 'log', load: loadOutbox, key: OUTBOX_KEY, count: (amount) => { sent += amount } },
+          { action: 'log_run', load: loadRunOutbox, key: RUN_OUTBOX_KEY, count: (amount) => { runSent += amount } },
+        ]
+        let stopped = false
         for (;;) {
-          const queue = loadOutbox(storage)
-          if (queue.length === 0) break
-          const batch = queue.slice(0, SEND_BATCH)
-          const result = await postBatch(batch, access)
-          if (result === 'rejected') {
-            rejected = true
-            break
+          let processed = false
+          for (const drain of drains) {
+            const queue = drain.load(storage)
+            if (queue.length === 0) continue
+            const batch = queue.slice(0, SEND_BATCH)
+            const result = await postBatch(drain.action, batch, access)
+            if (result.status === 'rejected') rejected = true
+            if (result.status !== 'ok') {
+              stopped = true
+              break
+            }
+            const rejectedIds = drain.action === 'log_run'
+              ? new Set(result.rejectedIds.filter((id) => batch.some((item) => item.id === id)))
+              : new Set()
+            const quarantinedIds = drain.action === 'log_run'
+              ? quarantineRejected(batch, rejectedIds)
+              : new Set()
+            const quarantineFailed = rejectedIds.size > quarantinedIds.size
+            // 送信中に追加された記録を失わないよう、最新キューからこのバッチだけを除く。
+            // GASで拒否されたrunは、隔離保存に成功したものだけを除く。
+            const removableIds = new Set(batch
+              .filter((item) => !rejectedIds.has(item.id) || quarantinedIds.has(item.id))
+              .map((item) => item.id))
+            saveQueue(drain.key, drain.load(storage).filter((item) => !removableIds.has(item.id)), storage)
+            drain.count(batch.length - rejectedIds.size)
+            processed = true
+            if (quarantineFailed) {
+              stopped = true
+              break
+            }
           }
-          if (result !== 'ok') break
-          // 送信中に追加された記録を失わないよう、最新のキューから送信済みIDだけを除く
-          const sentIds = new Set(batch.map((item) => item.id))
-          saveOutbox(loadOutbox(storage).filter((item) => !sentIds.has(item.id)), storage)
-          sent += batch.length
+          if (stopped || !processed
+            || (loadOutbox(storage).length === 0 && loadRunOutbox(storage).length === 0)) break
         }
-        return { sent, remaining: loadOutbox(storage).length }
+        return {
+          sent,
+          remaining: loadOutbox(storage).length,
+          runSent,
+          runRemaining: loadRunOutbox(storage).length,
+        }
       } finally {
         // キューの終了判定からここまではawaitを挟まない。直後の記録は新しいdrainを開始できる。
         if (flushPromise === pending) flushPromise = null
@@ -104,7 +194,16 @@ export function createRemoteSync({
     if (!isEnabled()) return false
     const queue = loadOutbox(storage)
     queue.push(record)
-    saveOutbox(queue.slice(-MAX_OUTBOX), storage)
+    saveQueue(OUTBOX_KEY, queue.slice(-MAX_OUTBOX), storage)
+    await flushPending()
+    return true
+  }
+
+  async function recordRun(record) {
+    if (!isEnabled()) return false
+    const queue = loadRunOutbox(storage)
+    queue.push(record)
+    saveQueue(RUN_OUTBOX_KEY, queue.slice(-MAX_RUN_OUTBOX), storage)
     await flushPending()
     return true
   }
@@ -124,7 +223,7 @@ export function createRemoteSync({
     }
   }
 
-  return { isEnabled, flushPending, recordCompletion, start }
+  return { isEnabled, flushPending, recordCompletion, recordRun, start }
 }
 
 export const remoteSync = createRemoteSync()

@@ -1,8 +1,19 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AUTO_ADVANCE_MS, CLOCK_TICK_MS } from '../appConfig.js'
 import { getElapsedMs } from '../domain/practiceSession.js'
 import { loadHistory } from '../services/history.js'
 import { usePracticeEngine } from './usePracticeEngine.js'
+
+const gasSource = readFileSync(resolve(process.cwd(), 'gas/Code.gs'), 'utf8')
+
+function gasAcceptsRun(record) {
+  const context = { JSON, Date, Object, Math, Number, String, Array, Set, isFinite }
+  runInNewContext(gasSource, context)
+  return context.normalizeRunRecord_(record) !== null
+}
 
 function createMemoryStorage() {
   const values = new Map()
@@ -39,14 +50,19 @@ function listenerCount(source) {
   return [...source.listeners.values()].reduce((sum, listeners) => sum + listeners.size, 0)
 }
 
-function createEngine(environment = createEnvironment(), storage = createMemoryStorage()) {
+function createEngine(
+  environment = createEnvironment(),
+  storage = createMemoryStorage(),
+  syncService = { recordCompletion: vi.fn(), recordRun: vi.fn() },
+) {
   return {
     environment,
     storage,
+    syncService,
     engine: usePracticeEngine({
       ...environment,
       storage,
-      syncService: { recordCompletion: vi.fn() },
+      syncService,
     }),
   }
 }
@@ -525,6 +541,127 @@ describe('usePracticeEngine', () => {
     engine.pressKey(engine.nextKey.value)
     engine.abandonRun()
     expect(loadHistory(storage)).toHaveLength(1)
+  })
+
+  it('履歴と同じIDのrun記録を終了時に一度だけ送り、設定へ戻る場合は送らない', () => {
+    const syncService = { recordCompletion: vi.fn(), recordRun: vi.fn().mockResolvedValue(true) }
+    const { engine, storage } = createEngine(createEnvironment(), createMemoryStorage(), syncService)
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    engine.finishRun({ endedBy: 'ended' })
+    engine.finishRun({ endedBy: 'ended' })
+
+    expect(syncService.recordRun).toHaveBeenCalledTimes(1)
+    const sent = syncService.recordRun.mock.calls[0][0]
+    const history = loadHistory(storage)[0]
+    expect(sent.id).toBe(history.id)
+    expect(sent).toMatchObject({
+      ts: history.ts,
+      mode: 'free',
+      hand: 'left',
+      level: 1,
+      includeSymbols: false,
+      layout: 'jis',
+      homePosition: false,
+      endedBy: 'ended',
+      attempts: 1,
+      rankVersion: null,
+      appVersion: history.appVersion,
+    })
+    expect(sent).not.toHaveProperty('v')
+
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    engine.abandonRun()
+    expect(syncService.recordRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('3モードの全終了形でエンジンが作るrunをGASが受理する', () => {
+    vi.setSystemTime(Date.UTC(2026, 10, 5, 3, 0, 0))
+    const records = []
+    const createCapturingEngine = () => createEngine(
+      createEnvironment(),
+      createMemoryStorage(),
+      {
+        recordCompletion: vi.fn(),
+        recordRun: vi.fn((record) => {
+          records.push(record)
+          return Promise.resolve(true)
+        }),
+      },
+    ).engine
+
+    const free = createCapturingEngine()
+    free.updateSettings({ mode: 'free', level: 2 })
+    free.startRun()
+    vi.advanceTimersByTime(400)
+    free.pressKey(free.nextKey.value)
+    free.pressKey(free.nextKey.value === 'a' ? 's' : 'a')
+    free.resetQuestion()
+    vi.advanceTimersByTime(600)
+    free.pressKey(free.nextKey.value)
+    free.finishRun({ endedBy: 'ended' })
+
+    const timeAttackEnded = createCapturingEngine()
+    timeAttackEnded.updateSettings({ mode: 'timeAttack', targetCount: 10 })
+    timeAttackEnded.startRun()
+    timeAttackEnded.pressKey(timeAttackEnded.nextKey.value)
+    timeAttackEnded.finishRun({ endedBy: 'ended' })
+
+    const timeAttackCompleted = createCapturingEngine()
+    timeAttackCompleted.updateSettings({ mode: 'timeAttack', targetCount: 10 })
+    timeAttackCompleted.startRun()
+    for (let index = 0; index < 10; index += 1) {
+      timeAttackCompleted.pressKey(timeAttackCompleted.nextKey.value)
+      if (index < 9) vi.advanceTimersByTime(AUTO_ADVANCE_MS)
+    }
+
+    const timeLimitEnded = createCapturingEngine()
+    timeLimitEnded.updateSettings({ mode: 'timeLimit', timeLimitSec: 30 })
+    timeLimitEnded.startRun()
+    timeLimitEnded.pressKey(timeLimitEnded.nextKey.value)
+    vi.advanceTimersByTime(500)
+    timeLimitEnded.finishRun({ endedBy: 'ended' })
+
+    const timeLimitUp = createCapturingEngine()
+    timeLimitUp.updateSettings({ mode: 'timeLimit', timeLimitSec: 30 })
+    timeLimitUp.startRun()
+    timeLimitUp.pressKey(timeLimitUp.nextKey.value)
+    vi.advanceTimersByTime(30_000)
+    timeLimitUp.pressKey(timeLimitUp.nextKey.value)
+
+    expect(records.map(({ mode, endedBy }) => [mode, endedBy])).toEqual([
+      ['free', 'ended'],
+      ['timeAttack', 'ended'],
+      ['timeAttack', 'completed'],
+      ['timeLimit', 'ended'],
+      ['timeLimit', 'timeUp'],
+    ])
+    records.forEach((record) => {
+      expect(record.correctCount + record.mistakes).toBe(record.attempts)
+      expect(gasAcceptsRun(record), `${record.mode}/${record.endedBy}`).toBe(true)
+    })
+  })
+
+  it('run記録の同期例外・Promise rejectでも結果確定を止めない', async () => {
+    const throwing = {
+      recordCompletion: vi.fn(),
+      recordRun: vi.fn(() => { throw new Error('boom') }),
+    }
+    const first = createEngine(createEnvironment(), createMemoryStorage(), throwing).engine
+    first.startRun()
+    first.pressKey(first.nextKey.value)
+    expect(first.finishRun({ endedBy: 'ended' })).toMatchObject({ attempts: 1, endedBy: 'ended' })
+
+    const rejecting = {
+      recordCompletion: vi.fn(),
+      recordRun: vi.fn(() => Promise.reject(new Error('offline'))),
+    }
+    const second = createEngine(createEnvironment(), createMemoryStorage(), rejecting).engine
+    second.startRun()
+    second.pressKey(second.nextKey.value)
+    expect(second.finishRun({ endedBy: 'ended' })).toMatchObject({ attempts: 1, endedBy: 'ended' })
+    await Promise.resolve()
   })
 
   it('attach中は表示時計のtickで制限時間が終了し、総経過時間は制限時間に収まる', () => {
