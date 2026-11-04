@@ -20,7 +20,7 @@ export const LANDSCAPE_LAYOUT = Object.freeze({
   shellInlineMin: 6,
   shellBlockMin: 5,
   legendMinimumWidth: 52,
-  // 設定操作を別画面へ移し、情報帯は問題・累計・やり直す・メニューで構成する。
+  // 設定操作を別画面へ移し、情報帯は問題・今回の成績・やり直す・メニューで構成する。
   stripPromptMinimumWidth: 186,
   stripStatsWidth: 182,
   stripCompactStatsWidth: 112,

@@ -158,6 +158,20 @@ describe('usePracticeEngine', () => {
     })
   })
 
+  it('run開始前の今回の成績と表示時間はゼロになる', () => {
+    const { engine } = createEngine()
+
+    expect(engine.runSummary.value).toMatchObject({
+      completedQuestions: 0,
+      correctCount: 0,
+      mistakes: 0,
+      attempts: 0,
+      inputMs: 0,
+      accuracy: 100,
+    })
+    expect(engine.runElapsedText.value).toBe('0:00')
+  })
+
   it('設定画面で待った時間はstartRun時の累計へ入れない', () => {
     const { engine } = createEngine()
     vi.advanceTimersByTime(5000)

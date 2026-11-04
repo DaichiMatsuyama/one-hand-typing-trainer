@@ -89,6 +89,84 @@ describe('設定・練習・結果の3画面', () => {
     wrapper.unmount()
   })
 
+  it('同じ設定でもう一度を選ぶと、右上の今回の成績がゼロから始まる', async () => {
+    const wrapper = mount(App)
+    await startPractice(wrapper)
+    vi.advanceTimersByTime(2000)
+    await wrapper.vm.$nextTick()
+    const expected = wrapper.get('.prompt-text .current').text()
+    const wrong = wrapper.findAll('.key')
+      .find((key) => key.attributes('data-key') !== expected)
+    await wrong.trigger('click')
+    await completeCurrentQuestion(wrapper)
+    expect(wrapper.get('[data-testid="completed"]').text()).toBe('1問')
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('1')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:02')
+
+    await confirmFinish(wrapper)
+    await wrapper.get('[data-testid="result-again"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="completed"]').text()).toBe('0問')
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('0')
+    expect(wrapper.get('[data-testid="accuracy"]').text()).toBe('100%')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
+    wrapper.unmount()
+  })
+
+  it('設定画面へ戻って始め直すと、右上の今回の成績がゼロから始まる', async () => {
+    const wrapper = mount(App)
+    await startPractice(wrapper)
+    vi.advanceTimersByTime(1000)
+    await wrapper.vm.$nextTick()
+    const expected = wrapper.get('.prompt-text .current').text()
+    const wrong = wrapper.findAll('.key')
+      .find((key) => key.attributes('data-key') !== expected)
+    await wrong.trigger('click')
+
+    await openPracticeMenu(wrapper)
+    await wrapper.get('[data-testid="menu-to-settings"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-yes"]').trigger('click')
+    await startPractice(wrapper)
+
+    expect(wrapper.get('[data-testid="completed"]').text()).toBe('0問')
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('0')
+    expect(wrapper.get('[data-testid="accuracy"]').text()).toBe('100%')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).results).toMatchObject({
+      mistakes: 1,
+      attempts: 1,
+      practiceMs: 1000,
+    })
+    wrapper.unmount()
+  })
+
+  it('練習中の右上と結果画面で、時間・クリア・ミス・正答率が一致する', async () => {
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="level-2"]').trigger('click')
+    await startPractice(wrapper)
+    vi.advanceTimersByTime(2500)
+    await wrapper.vm.$nextTick()
+    const expected = wrapper.get('.prompt-text .current').text()
+    const wrong = wrapper.findAll('.key')
+      .find((key) => key.attributes('data-key') !== expected)
+    await wrong.trigger('click')
+    await wrapper.get(`[data-key="${expected}"]`).trigger('click')
+
+    const practiceStats = {
+      time: wrapper.get('[data-testid="elapsed"]').text(),
+      completed: wrapper.get('[data-testid="completed"]').text(),
+      mistakes: wrapper.get('[data-testid="mistakes"]').text(),
+      accuracy: wrapper.get('[data-testid="accuracy"]').text(),
+    }
+    await confirmFinish(wrapper)
+
+    expect(wrapper.get('[data-testid="result-time"]').text()).toBe(practiceStats.time)
+    expect(wrapper.get('[data-testid="result-completed"]').text()).toBe(practiceStats.completed)
+    expect(wrapper.get('[data-testid="result-mistakes"]').text()).toBe(practiceStats.mistakes)
+    expect(wrapper.get('[data-testid="result-accuracy"]').text()).toBe(practiceStats.accuracy)
+    wrapper.unmount()
+  })
+
   it('途中の問題を含めて今回の値とKPMを表示する', async () => {
     const wrapper = mount(App)
     await wrapper.get('[data-testid="level-2"]').trigger('click')
@@ -154,7 +232,7 @@ describe('練習中メニュー', () => {
     document.body.innerHTML = ''
   })
 
-  it('開いている間は時間と入力を止め、背景タップで再開する', async () => {
+  it('runの途中でメニューを開閉しても、開いている間は今回の時間を増やさない', async () => {
     const wrapper = mount(App)
     await startPractice(wrapper)
     vi.advanceTimersByTime(2000)

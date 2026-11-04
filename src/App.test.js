@@ -76,7 +76,7 @@ describe('App', () => {
     wrapper.unmount()
   })
 
-  it('やり直しで現在位置をリセットし、ミスと時間は累計に残す', async () => {
+  it('やり直しで現在位置をリセットし、ミスと時間は今回に残す', async () => {
     const wrapper = mount(App)
     await startPractice(wrapper)
     const expected = wrapper.get('.prompt-text .current').text()
@@ -217,7 +217,7 @@ describe('App', () => {
     wrapper.unmount()
   })
 
-  it('クリア後に連打・再マウントしても結果を一度だけ加算する', async () => {
+  it('クリア後に連打・再マウントしても内部累計へ一度だけ加算し、新しい今回はゼロになる', async () => {
     const first = mount(App)
     await startPractice(first)
     const expected = first.get('.prompt-text .current').text()
@@ -230,17 +230,17 @@ describe('App', () => {
 
     const restored = mount(App)
     await startPractice(restored)
-    expect(restored.get('.stats').text()).toContain('クリア1問')
+    expect(restored.get('.stats').text()).toContain('クリア0問')
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).results.completedQuestions).toBe(1)
     restored.unmount()
   })
 
-  it('途中入力後の左右切替・レベル切替で位置をリセットし、ミスと時間は累計に残す', async () => {
+  it('途中入力後に設定へ戻ると内部累計へ移し、設定変更後の今回はゼロから始める', async () => {
     const wrapper = mount(App)
     await wrapper.get('[data-testid="level-2"]').trigger('click')
     await startPractice(wrapper)
 
-    async function addProgressAndMistake(expectedMistakes, expectedElapsed) {
+    async function addProgressAndMistake() {
       const expected = wrapper.get('.prompt-text .current').text()
       await wrapper.get(`[data-key="${expected}"]`).trigger('click')
       const nextExpected = wrapper.get('.prompt-text .current').text()
@@ -249,29 +249,35 @@ describe('App', () => {
       vi.advanceTimersByTime(2000)
       await wrapper.vm.$nextTick()
       expect(wrapper.findAll('.prompt-text .done')).toHaveLength(1)
-      expect(wrapper.get('[data-testid="mistakes"]').text()).toBe(String(expectedMistakes))
-      expect(wrapper.get('[data-testid="elapsed"]').text()).toBe(expectedElapsed)
+      expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('1')
+      expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:02')
     }
 
-    await addProgressAndMistake(1, '0:02')
+    await addProgressAndMistake()
     await openPracticeMenu(wrapper)
     await wrapper.get('[data-testid="menu-to-settings"]').trigger('click')
     await wrapper.get('[data-testid="confirm-yes"]').trigger('click')
     await wrapper.get('[data-testid="hand-right"]').trigger('click')
     await startPractice(wrapper)
     expect(wrapper.findAll('.prompt-text .done')).toHaveLength(0)
-    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('1')
-    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:02')
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('0')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
 
-    await addProgressAndMistake(2, '0:04')
+    await addProgressAndMistake()
     await openPracticeMenu(wrapper)
     await wrapper.get('[data-testid="menu-to-settings"]').trigger('click')
     await wrapper.get('[data-testid="confirm-yes"]').trigger('click')
     await wrapper.get('[data-testid="level-3"]').trigger('click')
     await startPractice(wrapper)
     expect(wrapper.findAll('.prompt-text .done')).toHaveLength(0)
-    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('2')
-    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:04')
+    expect(wrapper.get('[data-testid="mistakes"]').text()).toBe('0')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).results).toMatchObject({
+      correctCount: 2,
+      mistakes: 2,
+      attempts: 4,
+      practiceMs: 4000,
+    })
     wrapper.unmount()
   })
 

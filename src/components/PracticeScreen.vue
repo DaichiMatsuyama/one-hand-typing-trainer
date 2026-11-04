@@ -17,8 +17,8 @@ const {
   layout,
   nextKey,
   nextFinger,
-  totalStats,
-  elapsedText,
+  runSummary,
+  runElapsedText,
   pressKey,
   resetQuestion,
   resetAllStats,
@@ -73,15 +73,15 @@ onBeforeUnmount(() => props.engine.detach())
       />
 
       <ResultView
-        :elapsed-text="elapsedText"
-        :accuracy="totalStats.accuracy"
-        :mistakes="totalStats.mistakes"
+        :elapsed-text="runElapsedText"
+        :accuracy="runSummary.accuracy"
+        :mistakes="runSummary.mistakes"
         :is-complete="session.isComplete"
         :feedback="session.feedback"
         :notice="resetNotice"
         :next-key="nextKey"
         :next-finger="nextFinger"
-        :completed-questions="totalStats.completedQuestions"
+        :completed-questions="runSummary.completedQuestions"
         @reset="resetQuestion"
         @reset-all="resetAllStats"
       />

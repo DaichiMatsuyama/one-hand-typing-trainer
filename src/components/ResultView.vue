@@ -29,7 +29,7 @@ const liveMessage = computed(() => {
   return `次は${nextInstruction.value}`
 })
 
-// タップ=今の問題をやり直す / 長押し=累計成績もすべてリセット
+// タップ=今の問題をやり直す / 長押し=今回の成績をゼロから数え直す
 const pressing = ref(false)
 let pressTimer
 let longPressFired = false
@@ -107,7 +107,7 @@ onBeforeUnmount(() => clearTimeout(pressTimer))
       >
         <span class="reset-label">やり直す</span>
       </button>
-      <span id="reset-hint" class="visually-hidden">今の問題を最初からやり直します。長押しすると、時間・正答率・ミス・クリア数もすべてリセットします。</span>
+      <span id="reset-hint" class="visually-hidden">今の問題を最初からやり直します。長押しすると、今回の時間・正答率・ミス・クリア数をリセットします。</span>
     </div>
   </section>
 </template>

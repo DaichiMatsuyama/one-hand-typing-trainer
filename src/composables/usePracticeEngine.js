@@ -98,9 +98,8 @@ export function usePracticeEngine({
     return key ? getFinger(key.finger).label : ''
   })
   const elapsedMs = computed(() => getElapsedMs(session.value, now.value))
-  // 画面の時間・正答率・ミス・クリア数は、リセットするまでの累計
+  // runのbaselineとの差を求めるため、進行中の問題を含む累計相当値を保つ。
   const totalStats = computed(() => getTotalStats(results.value, session.value, now.value))
-  const elapsedText = computed(() => formatDuration(totalStats.value.elapsedMs))
   const runSummary = computed(() => {
     if (!run.value) return summarizeRunStats({}, {})
     if (run.value.summary) return run.value.summary
@@ -110,6 +109,7 @@ export function usePracticeEngine({
       run.value.menuOpenCount,
     )
   })
+  const runElapsedText = computed(() => formatDuration(runSummary.value.inputMs))
 
   const portraitQuery = typeof win?.matchMedia === 'function'
     ? win.matchMedia(PORTRAIT_QUERY)
@@ -354,7 +354,7 @@ export function usePracticeEngine({
     return true
   }
 
-  // 「やり直す」の長押し: 累計成績もすべてゼロにして、今の問題を最初からやり直す
+  // 「やり直す」の長押し: 今回をゼロから数え直すため、累計とbaselineもゼロにする。
   function resetAllStats() {
     if (pauseReasons.has('menu')) return false
     results.value = { ...defaultResults }
@@ -362,7 +362,7 @@ export function usePracticeEngine({
       run.value = { ...run.value, baseline: { ...defaultResults }, summary: null }
     }
     beginQuestion()
-    resetNotice.value = '成績をすべてリセットしました'
+    resetNotice.value = '今回の成績をリセットしました'
     clearTimeout(noticeTimer)
     noticeTimer = setTimeout(() => {
       resetNotice.value = ''
@@ -439,8 +439,8 @@ export function usePracticeEngine({
     nextFinger,
     elapsedMs,
     totalStats,
-    elapsedText,
     runSummary,
+    runElapsedText,
     currentQuestion,
     pressKey,
     resetQuestion,
