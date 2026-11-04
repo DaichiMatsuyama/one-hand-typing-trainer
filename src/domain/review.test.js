@@ -8,11 +8,38 @@ import {
   formatJstDate,
   formatPracticeTime,
   heatLevel,
+  isReviewStats,
   keyMissStats,
   shortDeviceId,
   summarizeDaily,
   weakestKeys,
 } from './review.js'
+
+describe('isReviewStats', () => {
+  const valid = {
+    totals: { records: 1, practiceMs: 1000, days: 1 },
+    today: { records: 1, practiceMs: 1000, attempts: 2, mistakes: 1 },
+    streak: 1,
+    daily: [{ date: '2026-11-04', records: 1, practiceMs: 1000, attempts: 2, mistakes: 1 }],
+    keys: { a: { shown: 2, misses: 1 } },
+    confusions: [{ expected: 'a', pressed: 's', count: 1 }],
+  }
+
+  it('描画に必要な集計の形を受け入れる', () => {
+    expect(isReviewStats(valid)).toBe(true)
+  })
+
+  it.each([
+    ['dailyの要素', { daily: [null] }],
+    ['confusionsの要素', { confusions: [null] }],
+    ['keysの値', { keys: { a: null } }],
+    ['totalsの数値', { totals: { records: '1', practiceMs: 1000, days: 1 } }],
+    ['todayの数値', { today: { records: 1, practiceMs: 1000, attempts: null, mistakes: 1 } }],
+    ['streakの数値', { streak: '1' }],
+  ])('%sが不正なら拒否する', (_label, replacement) => {
+    expect(isReviewStats({ ...valid, ...replacement })).toBe(false)
+  })
+})
 
 describe('accuracyPercent', () => {
   it('タップ数が0ならnull、それ以外は正しく押した割合', () => {

@@ -1,6 +1,10 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ADMIN_LONG_PRESS_MS } from '../appConfig.js'
+import {
+  ADMIN_LONG_PRESS_MS,
+  REVIEW_FLUSH_WAIT_MS,
+  REVIEW_REFRESH_INTERVAL_MS,
+} from '../appConfig.js'
 import { getKeyboardLayout, getKeySpokenName } from '../data/keyboardLayouts.js'
 import {
   accuracyPercent,
@@ -10,12 +14,14 @@ import {
   formatJstDate,
   formatPracticeTime,
   heatLevel,
+  isReviewStats,
   keyMissStats,
   shortDeviceId,
   summarizeDaily,
   weakestKeys,
 } from '../domain/review.js'
 import { fetchDevices, fetchDeviceStats, fetchStats } from '../services/statsApi.js'
+import { remoteSync } from '../services/remoteSync.js'
 
 const props = defineProps({
   endpoint: { type: String, required: true },
@@ -23,19 +29,67 @@ const props = defineProps({
   hand: { type: String, default: 'left' },
   fetchImpl: { type: Function, default: undefined },
   adminPressMs: { type: Number, default: ADMIN_LONG_PRESS_MS },
+  syncService: { type: Object, default: () => remoteSync },
 })
 
 const root = ref(null)
 const ADMIN_KEY = 'one-hand-typing-trainer:admin:v1'
-const RELOAD_INTERVAL_MS = 20_000
+const REVIEW_CACHE_KEY = 'one-hand-typing-trainer:review-cache:v1'
 const MAX_CONFUSIONS_SHOWN = 5
 
 const state = ref('idle') // idle | loading | ready | error
 const errorReason = ref('')
-const stats = ref(null)
+const announceRefreshError = ref(false)
 const heatHand = ref(props.hand === 'right' ? 'right' : 'left')
-let lastLoadedAt = 0
 let loadGeneration = 0
+let announcedErrorReason = ''
+const flushWaits = new Set()
+
+function removeReviewCache() {
+  try {
+    globalThis.localStorage?.removeItem(REVIEW_CACHE_KEY)
+  } catch {
+    // 削除できなくても表示は続ける
+  }
+}
+
+function readReviewCache() {
+  let raw
+  try {
+    raw = globalThis.localStorage?.getItem(REVIEW_CACHE_KEY) ?? null
+  } catch {
+    return null
+  }
+  if (raw === null) return null
+  try {
+    const cached = JSON.parse(raw)
+    if (cached && typeof cached === 'object' && !Array.isArray(cached)
+      && cached.deviceId === props.access.deviceId
+      && Number.isFinite(cached.savedAt)
+      && isReviewStats(cached.stats)) return cached.stats
+  } catch {
+    // 不正なJSONも下で破棄する
+  }
+  removeReviewCache()
+  return null
+}
+
+function saveReviewCache(nextStats) {
+  try {
+    globalThis.localStorage?.setItem(REVIEW_CACHE_KEY, JSON.stringify({
+      stats: nextStats,
+      savedAt: Date.now(),
+      deviceId: props.access.deviceId,
+    }))
+  } catch {
+    // 保存できなくても表示は続ける
+  }
+}
+
+const cachedStats = readReviewCache()
+const stats = ref(cachedStats)
+// nullは自分、文字列は管理者の対象端末。undefinedはまだ何も表示していない状態。
+let displayedTargetId = cachedStats ? null : undefined
 
 // 管理者表示
 const adminOpen = ref(false)
@@ -78,14 +132,63 @@ function clearAdminSession(message) {
   adminError.value = message
 }
 
-async function load({ force = false } = {}) {
-  if (!force && state.value === 'ready' && Date.now() - lastLoadedAt < RELOAD_INTERVAL_MS) return
+async function waitForPendingFlush() {
+  if (!props.endpoint) return
+  try {
+    if (!props.syncService?.isEnabled?.()) return
+  } catch {
+    return
+  }
+
+  let wait
+  try {
+    await Promise.race([
+      Promise.resolve().then(() => props.syncService.flushPending()).catch(() => {}),
+      new Promise((resolve) => {
+        wait = { resolve, timer: setTimeout(resolve, REVIEW_FLUSH_WAIT_MS) }
+        flushWaits.add(wait)
+      }),
+    ])
+  } finally {
+    clearTimeout(wait?.timer)
+    flushWaits.delete(wait)
+  }
+}
+
+function releaseFlushWaits() {
+  flushWaits.forEach((wait) => {
+    clearTimeout(wait.timer)
+    wait.resolve()
+  })
+  flushWaits.clear()
+}
+
+function invalidateLoad() {
+  loadGeneration += 1
+  releaseFlushWaits()
+  if (state.value === 'loading') state.value = stats.value ? 'ready' : 'idle'
+}
+
+async function load() {
+  releaseFlushWaits()
   const generation = ++loadGeneration
   const target = viewing.value ? { ...viewing.value } : null
+  const targetId = target?.deviceId ?? null
+  const keepCurrentStats = Boolean(stats.value) && displayedTargetId === targetId
   state.value = 'loading'
   errorReason.value = ''
-  // 端末名だけが先に切り替わり、直前の端末の成績が見える状態を作らない。
-  stats.value = null
+  announceRefreshError.value = false
+  if (!keepCurrentStats) {
+    // 端末名だけが先に切り替わり、直前の端末の成績が見える状態を作らない。
+    stats.value = null
+    displayedTargetId = targetId
+  }
+
+  await waitForPendingFlush()
+  if (!canAutoRefresh()
+    || generation !== loadGeneration
+    || (viewing.value?.deviceId ?? null) !== targetId) return
+
   const common = { endpoint: props.endpoint, access: props.access, fetchImpl: props.fetchImpl }
   const result = target
     ? await fetchDeviceStats({
@@ -95,14 +198,24 @@ async function load({ force = false } = {}) {
     })
     : await fetchStats(common)
   const currentTargetId = viewing.value?.deviceId ?? null
-  if (generation !== loadGeneration || currentTargetId !== (target?.deviceId ?? null)) return
+  if (generation !== loadGeneration || currentTargetId !== targetId) return
   if (result.ok) {
     stats.value = result.stats
+    displayedTargetId = targetId
     state.value = 'ready'
-    lastLoadedAt = Date.now()
+    announcedErrorReason = ''
+    if (!target) saveReviewCache(result.stats)
   } else {
-    if (result.reason === 'invalid_admin') clearAdminSession(ERROR_TEXT.invalid_admin)
+    if (result.reason === 'invalid_admin') {
+      clearAdminSession(ERROR_TEXT.invalid_admin)
+      stats.value = null
+      displayedTargetId = undefined
+    }
     errorReason.value = result.reason
+    if (stats.value) {
+      announceRefreshError.value = announcedErrorReason !== result.reason
+      announcedErrorReason = result.reason
+    }
     state.value = 'error'
   }
 }
@@ -189,13 +302,13 @@ async function viewDevice(device) {
     ? null
     : { deviceId: device.deviceId, label: `${deviceLabel(device)}(${deviceDetail(device)})` }
   scrollToTop()
-  await load({ force: true })
+  await load()
 }
 
 async function backToSelf() {
   viewing.value = null
   scrollToTop()
-  await load({ force: true })
+  await load()
 }
 
 // ---- 表示用の集計 ---------------------------------------------------------
@@ -291,17 +404,57 @@ const portraitQuery = typeof window.matchMedia === 'function'
   : null
 
 function onOrientationChange() {
-  if (!portraitQuery || portraitQuery.matches) load()
+  if (!portraitQuery || portraitQuery.matches) {
+    if (!document.hidden) load()
+    startAutoRefresh()
+  } else {
+    invalidateLoad()
+    stopAutoRefresh()
+  }
+}
+
+let refreshTimer
+
+function canAutoRefresh() {
+  return (!portraitQuery || portraitQuery.matches) && !document.hidden
+}
+
+function stopAutoRefresh() {
+  clearInterval(refreshTimer)
+  refreshTimer = undefined
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  if (!canAutoRefresh()) return
+  refreshTimer = setInterval(() => {
+    if (canAutoRefresh()) load()
+    else stopAutoRefresh()
+  }, REVIEW_REFRESH_INTERVAL_MS)
+}
+
+function onVisibilityChange() {
+  if (!document.hidden && (!portraitQuery || portraitQuery.matches)) {
+    load()
+    startAutoRefresh()
+  } else {
+    invalidateLoad()
+    stopAutoRefresh()
+  }
 }
 
 onMounted(() => {
   portraitQuery?.addEventListener?.('change', onOrientationChange)
+  document.addEventListener('visibilitychange', onVisibilityChange)
   onOrientationChange()
 })
 
 onBeforeUnmount(() => {
+  invalidateLoad()
   clearTimeout(adminPressTimer)
+  stopAutoRefresh()
   portraitQuery?.removeEventListener?.('change', onOrientationChange)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
 defineExpose({ load })
@@ -367,12 +520,19 @@ defineExpose({ load })
 
     <p v-if="state === 'loading' && !stats" class="review-message" role="status">読み込み中…</p>
 
-    <div v-else-if="state === 'error'" class="review-message" role="alert" data-testid="review-error">
+    <div v-else-if="state === 'error' && !stats" class="review-message" role="alert" data-testid="review-error">
       <p>{{ errorText }}</p>
-      <button type="button" class="review-button" data-testid="review-retry" @click="load({ force: true })">もう一度読み込む</button>
+      <button type="button" class="review-button" data-testid="review-retry" @click="load()">もう一度読み込む</button>
     </div>
 
-    <template v-if="stats && (state === 'ready' || state === 'loading')">
+    <template v-if="stats">
+      <p v-if="state === 'loading'" class="review-update-state" aria-hidden="true" data-testid="review-refreshing">更新中…</p>
+      <p
+        v-else-if="state === 'error'"
+        class="review-update-state review-update-error"
+        :role="announceRefreshError ? 'alert' : undefined"
+        data-testid="review-refresh-error"
+      >{{ errorText }}</p>
       <p v-if="!hasRecords" class="review-message" data-testid="review-empty">
         まだ記録がありません。横向きにして練習すると、ここに成績が出ます。
       </p>

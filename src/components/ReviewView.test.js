@@ -1,10 +1,14 @@
-import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { REVIEW_FLUSH_WAIT_MS, REVIEW_REFRESH_INTERVAL_MS } from '../appConfig.js'
 import ReviewView from './ReviewView.vue'
 
 const ENDPOINT = 'https://script.google.com/macros/s/test/exec'
 const access = { granted: true, code: 'code-1', deviceId: 'dev-mine', grantedAt: 1 }
 const ADMIN_KEY = 'one-hand-typing-trainer:admin:v1'
+const REVIEW_CACHE_KEY = 'one-hand-typing-trainer:review-cache:v1'
+
+enableAutoUnmount(afterEach)
 
 const day = (date, records, practiceMs, attempts, mistakes) => ({ date, records, practiceMs, attempts, mistakes })
 const daily = Array.from({ length: 14 }, (_, index) => day(`2026-10-${String(21 + index).padStart(2, '0')}`, 0, 0, 0, 0))
@@ -50,6 +54,38 @@ function mockApi(handlers) {
   })
 }
 
+function memoryStorage(initial = {}) {
+  const values = new Map(Object.entries(initial))
+  return {
+    getItem: vi.fn((key) => values.get(key) ?? null),
+    setItem: vi.fn((key, value) => { values.set(key, value) }),
+    removeItem: vi.fn((key) => { values.delete(key) }),
+    clear: vi.fn(() => { values.clear() }),
+  }
+}
+
+function installMatchMedia(initialPortrait) {
+  const state = {
+    portrait: initialPortrait,
+    listeners: new Set(),
+    set(value) {
+      state.portrait = value
+      state.listeners.forEach((listener) => listener({ matches: value }))
+    },
+  }
+  window.matchMedia = vi.fn((query) => ({
+    get matches() { return query.includes('orientation: portrait') ? state.portrait : false },
+    media: query,
+    addEventListener: (_type, listener) => state.listeners.add(listener),
+    removeEventListener: (_type, listener) => state.listeners.delete(listener),
+  }))
+  return state
+}
+
+function enabledSync(flushPending = vi.fn().mockResolvedValue({ sent: 0, remaining: 0 })) {
+  return { isEnabled: vi.fn(() => true), flushPending }
+}
+
 // テストでは長押しの時間を短くする(本番は appConfig の ADMIN_LONG_PRESS_MS)
 const TEST_PRESS_MS = 5
 
@@ -71,6 +107,13 @@ async function openAdminPanel(wrapper) {
 describe('ReviewView(振り返り画面)', () => {
   beforeEach(() => {
     localStorage.clear()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    delete window.matchMedia
   })
 
   it('読み込み中を表示し、成功したら今日のまとめと合計を出す', async () => {
@@ -167,6 +210,284 @@ describe('ReviewView(振り返り画面)', () => {
     expect(wrapper.get('[data-testid="streak"]').text()).toBe('2日')
   })
 
+  describe('送信完了を待ってから成績を取得する', () => {
+    it('進行中のflushが終わるまでは取得を始めない', async () => {
+      let releaseFlush
+      const flushPending = vi.fn(() => new Promise((resolve) => { releaseFlush = resolve }))
+      const fetchImpl = mockApi({ stats: () => ({ ok: true, stats }) })
+      mount(ReviewView, {
+        props: { endpoint: ENDPOINT, access, fetchImpl, syncService: enabledSync(flushPending) },
+      })
+      await flushPromises()
+      expect(flushPending).toHaveBeenCalledTimes(1)
+      expect(fetchImpl).not.toHaveBeenCalled()
+
+      releaseFlush({ sent: 1, remaining: 0 })
+      await flushPromises()
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    })
+
+    it('flushが上限を超えても成績取得へ進む', async () => {
+      vi.useFakeTimers()
+      const flushPending = vi.fn(() => new Promise(() => {}))
+      const fetchImpl = mockApi({ stats: () => ({ ok: true, stats }) })
+      mount(ReviewView, {
+        props: { endpoint: ENDPOINT, access, fetchImpl, syncService: enabledSync(flushPending) },
+      })
+      await flushPromises()
+      expect(fetchImpl).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(REVIEW_FLUSH_WAIT_MS)
+      await flushPromises()
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    })
+
+    it('flushが失敗しても成績取得を続け、無効ならflushを呼ばない', async () => {
+      const rejectedFlush = vi.fn().mockRejectedValue(new Error('offline'))
+      const fetchImpl = mockApi({ stats: () => ({ ok: true, stats }) })
+      await mountReview(fetchImpl, { syncService: enabledSync(rejectedFlush) })
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+      const disabledFlush = vi.fn()
+      const disabledFetch = mockApi({ stats: () => ({ ok: true, stats }) })
+      await mountReview(disabledFetch, {
+        endpoint: '',
+        syncService: { isEnabled: vi.fn(() => false), flushPending: disabledFlush },
+      })
+      expect(disabledFlush).not.toHaveBeenCalled()
+      expect(disabledFetch).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('縦向きにするたび、直前の取得から20秒以内でも取り直す', async () => {
+    const orientation = installMatchMedia(false)
+    const fetchImpl = mockApi({ stats: () => ({ ok: true, stats }) })
+    mount(ReviewView, { props: { endpoint: ENDPOINT, access, fetchImpl } })
+    await flushPromises()
+    expect(fetchImpl).not.toHaveBeenCalled()
+
+    orientation.set(true)
+    await flushPromises()
+    orientation.set(false)
+    orientation.set(true)
+    await flushPromises()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('同じ対象の再読み込みでは古い表示を残して更新中を出し、失敗しても表示を残す', async () => {
+    let releaseRefresh
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, stats }) })
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseRefresh = resolve }))
+      .mockRejectedValueOnce(new TypeError('offline'))
+    const wrapper = await mountReview(fetchImpl)
+
+    const refreshing = wrapper.vm.load()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[data-testid="streak"]').text()).toBe('2日')
+    expect(wrapper.get('[data-testid="review-refreshing"]').text()).toBe('更新中…')
+    expect(wrapper.get('[data-testid="review-refreshing"]').attributes('role')).toBeUndefined()
+    expect(wrapper.get('[data-testid="review-refreshing"]').attributes('aria-hidden')).toBe('true')
+
+    releaseRefresh({ ok: true, json: async () => ({ ok: true, stats: { ...stats, streak: 4 } }) })
+    await refreshing
+    await wrapper.vm.load()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="streak"]').text()).toBe('4日')
+    expect(wrapper.get('[data-testid="review-refresh-error"]').text()).toContain('通信できませんでした')
+  })
+
+  it('同じ更新エラーは一度だけ通知し、理由が変わるともう一度通知する', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, stats }) })
+      .mockRejectedValueOnce(new TypeError('offline'))
+      .mockRejectedValueOnce(new TypeError('offline'))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: false, error: 'locked' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, stats }) })
+      .mockRejectedValueOnce(new TypeError('offline'))
+    const wrapper = await mountReview(fetchImpl)
+
+    await wrapper.vm.load()
+    expect(wrapper.get('[data-testid="review-refresh-error"]').attributes('role')).toBe('alert')
+
+    await wrapper.vm.load()
+    expect(wrapper.get('[data-testid="review-refresh-error"]').attributes('role')).toBeUndefined()
+    expect(wrapper.get('[data-testid="review-refresh-error"]').attributes('aria-live')).toBeUndefined()
+
+    await wrapper.vm.load()
+    expect(wrapper.get('[data-testid="review-refresh-error"]').text()).toContain('しばらく表示できません')
+    expect(wrapper.get('[data-testid="review-refresh-error"]').attributes('role')).toBe('alert')
+
+    await wrapper.vm.load()
+    expect(wrapper.find('[data-testid="review-refresh-error"]').exists()).toBe(false)
+    await wrapper.vm.load()
+    expect(wrapper.get('[data-testid="review-refresh-error"]').attributes('role')).toBe('alert')
+  })
+
+  describe('自分の成績キャッシュ', () => {
+    it('取得結果を必要な3項目だけで保存し、コード類を含めない', async () => {
+      const storage = memoryStorage({ [ADMIN_KEY]: 'admin-secret' })
+      vi.stubGlobal('localStorage', storage)
+      await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }))
+
+      const saved = JSON.parse(storage.setItem.mock.calls.find(([key]) => key === REVIEW_CACHE_KEY)[1])
+      expect(Object.keys(saved).sort()).toEqual(['deviceId', 'savedAt', 'stats'])
+      expect(saved.deviceId).toBe(access.deviceId)
+      expect(saved.stats).toEqual(stats)
+      expect(JSON.stringify(saved)).not.toContain(access.code)
+      expect(JSON.stringify(saved)).not.toContain('admin-secret')
+    })
+
+    it('起動直後に同じ端末のキャッシュを表示し、そのまま更新する', async () => {
+      let release
+      const storage = memoryStorage({
+        [REVIEW_CACHE_KEY]: JSON.stringify({ stats, savedAt: 123, deviceId: access.deviceId }),
+      })
+      vi.stubGlobal('localStorage', storage)
+      const fetchImpl = vi.fn(() => new Promise((resolve) => { release = resolve }))
+      const wrapper = mount(ReviewView, { props: { endpoint: ENDPOINT, access, fetchImpl } })
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.get('[data-testid="streak"]').text()).toBe('2日')
+      expect(wrapper.get('[data-testid="review-refreshing"]').exists()).toBe(true)
+      release({ ok: true, json: async () => ({ ok: true, stats: { ...stats, streak: 7 } }) })
+      await flushPromises()
+      expect(wrapper.get('[data-testid="streak"]').text()).toBe('7日')
+    })
+
+    it.each([
+      ['壊れたJSON', '{oops'],
+      ['形が違う値', JSON.stringify({ stats: {}, savedAt: 1, deviceId: access.deviceId })],
+      ['別端末の値', JSON.stringify({ stats, savedAt: 1, deviceId: 'dev-other' })],
+      ['dailyにnullを含む値', JSON.stringify({ stats: { ...stats, daily: [null] }, savedAt: 1, deviceId: access.deviceId })],
+      ['confusionsにnullを含む値', JSON.stringify({ stats: { ...stats, confusions: [null] }, savedAt: 1, deviceId: access.deviceId })],
+    ])('%sは使わない', async (_label, cached) => {
+      let release
+      const storage = memoryStorage({ [REVIEW_CACHE_KEY]: cached })
+      vi.stubGlobal('localStorage', storage)
+      const fetchImpl = vi.fn(() => new Promise((resolve) => { release = resolve }))
+      const wrapper = mount(ReviewView, { props: { endpoint: ENDPOINT, access, fetchImpl } })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('読み込み中')
+      expect(wrapper.find('[data-testid="streak"]').exists()).toBe(false)
+      expect(storage.removeItem).toHaveBeenCalledWith(REVIEW_CACHE_KEY)
+      release({ ok: true, json: async () => ({ ok: true, stats }) })
+      await flushPromises()
+    })
+  })
+
+  describe('開いている間の自動更新', () => {
+    it.each(['横向き', '非表示'])('flush待ち中に%sへ移ると、完了後も取得せず読み込み中を解除する', async (transition) => {
+      vi.useFakeTimers()
+      const orientation = installMatchMedia(true)
+      let releaseFlush
+      const flushPending = vi.fn(() => new Promise((resolve) => { releaseFlush = resolve }))
+      const fetchImpl = mockApi({ stats: () => ({ ok: true, stats }) })
+      const wrapper = mount(ReviewView, {
+        props: { endpoint: ENDPOINT, access, fetchImpl, syncService: enabledSync(flushPending) },
+      })
+      await flushPromises()
+      expect(wrapper.text()).toContain('読み込み中')
+
+      if (transition === '横向き') {
+        orientation.set(false)
+      } else {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+        document.dispatchEvent(new Event('visibilitychange'))
+      }
+      await flushPromises()
+      releaseFlush({ sent: 0, remaining: 0 })
+      await flushPromises()
+
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(wrapper.text()).not.toContain('読み込み中')
+      expect(wrapper.find('[data-testid="review-refreshing"]').exists()).toBe(false)
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('縦向き・表示中だけ定期更新し、非表示と横向きでは止まる', async () => {
+      vi.useFakeTimers()
+      const orientation = installMatchMedia(true)
+      const fetchImpl = mockApi({ stats: () => ({ ok: true, stats }) })
+      mount(ReviewView, { props: { endpoint: ENDPOINT, access, fetchImpl } })
+      await flushPromises()
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(REVIEW_REFRESH_INTERVAL_MS)
+      await flushPromises()
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(REVIEW_REFRESH_INTERVAL_MS * 2)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+      document.dispatchEvent(new Event('visibilitychange'))
+      await flushPromises()
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+
+      orientation.set(false)
+      await vi.advanceTimersByTimeAsync(REVIEW_REFRESH_INTERVAL_MS * 2)
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+    })
+
+    it('破棄時にタイマーとイベントを解除する', async () => {
+      vi.useFakeTimers()
+      const orientation = installMatchMedia(true)
+      const fetchImpl = mockApi({ stats: () => ({ ok: true, stats }) })
+      const wrapper = mount(ReviewView, { props: { endpoint: ENDPOINT, access, fetchImpl } })
+      await flushPromises()
+      wrapper.unmount()
+
+      await vi.advanceTimersByTimeAsync(REVIEW_REFRESH_INTERVAL_MS * 2)
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+      document.dispatchEvent(new Event('visibilitychange'))
+      orientation.set(true)
+      await flushPromises()
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('送信待ちの途中で破棄しても上限待ちタイマーを残さない', async () => {
+      vi.useFakeTimers()
+      installMatchMedia(true)
+      const fetchImpl = mockApi({ stats: () => ({ ok: true, stats }) })
+      const wrapper = mount(ReviewView, {
+        props: {
+          endpoint: ENDPOINT,
+          access,
+          fetchImpl,
+          syncService: enabledSync(vi.fn(() => new Promise(() => {}))),
+        },
+      })
+      await flushPromises()
+      wrapper.unmount()
+      await flushPromises()
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    })
+  })
+
+  it('同じ対象の読み込みが競合しても、古い結果で新しい表示を上書きしない', async () => {
+    let releaseSlow
+    const slow = new Promise((resolve) => { releaseSlow = resolve })
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, stats }) })
+      .mockReturnValueOnce(slow)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, stats: { ...stats, streak: 8 } }) })
+    const wrapper = await mountReview(fetchImpl)
+
+    const oldLoad = wrapper.vm.load()
+    await Promise.resolve()
+    await wrapper.vm.load()
+    expect(wrapper.get('[data-testid="streak"]').text()).toBe('8日')
+    releaseSlow({ ok: true, json: async () => ({ ok: true, stats: { ...stats, streak: 3 } }) })
+    await oldLoad
+    await flushPromises()
+    expect(wrapper.get('[data-testid="streak"]').text()).toBe('8日')
+  })
+
   describe('管理者表示の入口(画面には何も表示しない)', () => {
     it('通常の画面に「管理者」の文言やボタンは出さない', async () => {
       const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }))
@@ -244,6 +565,7 @@ describe('ReviewView(振り返り画面)', () => {
       await flushPromises()
       expect(wrapper.get('[data-testid="review-viewing"]').text()).toContain('管理者表示')
       expect(wrapper.get('[data-testid="streak"]').text()).toBe('2日')
+      expect(JSON.parse(localStorage.getItem(REVIEW_CACHE_KEY)).stats).toEqual(emptyStats)
       const last = fetchImpl.mock.calls.at(-1)
       expect(JSON.parse(last[1].body)).toEqual({
         action: 'admin_stats', code: 'code-1', adminCode: 'adm-ok', targetDeviceId: 'dev-friend-1234567',

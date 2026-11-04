@@ -34,7 +34,7 @@ export function createRemoteSync({
   getAccess = () => loadAccess(storage),
   win = globalThis.window,
 } = {}) {
-  let flushing = false
+  let flushPromise = null
   // コードが拒否されたら、そのセッション中は再送を試みない(キューは残す)
   let rejected = false
 
@@ -63,31 +63,41 @@ export function createRemoteSync({
     }
   }
 
-  async function flushPending() {
-    if (!isEnabled() || flushing || rejected) return { sent: 0, remaining: loadOutbox(storage).length }
-    const access = getAccess()
-    flushing = true
-    let sent = 0
-    try {
-      for (;;) {
-        const queue = loadOutbox(storage)
-        if (queue.length === 0) break
-        const batch = queue.slice(0, SEND_BATCH)
-        const result = await postBatch(batch, access)
-        if (result === 'rejected') {
-          rejected = true
-          break
-        }
-        if (result !== 'ok') break
-        // 送信中に追加された記録を失わないよう、最新のキューから送信済みIDだけを除く
-        const sentIds = new Set(batch.map((item) => item.id))
-        saveOutbox(loadOutbox(storage).filter((item) => !sentIds.has(item.id)), storage)
-        sent += batch.length
-      }
-    } finally {
-      flushing = false
+  function flushPending() {
+    if (!isEnabled() || rejected) {
+      return Promise.resolve({ sent: 0, remaining: loadOutbox(storage).length })
     }
-    return { sent, remaining: loadOutbox(storage).length }
+    // 送信中の呼び出し元も同じ処理の完了を待てるようにする。新しい送信は開始しない。
+    if (flushPromise) return flushPromise
+    const access = getAccess()
+    const pending = (async () => {
+      // 空キューでもIIFEを同期完了させず、先にflushPromiseへ共有Promiseを設定する。
+      await Promise.resolve()
+      let sent = 0
+      try {
+        for (;;) {
+          const queue = loadOutbox(storage)
+          if (queue.length === 0) break
+          const batch = queue.slice(0, SEND_BATCH)
+          const result = await postBatch(batch, access)
+          if (result === 'rejected') {
+            rejected = true
+            break
+          }
+          if (result !== 'ok') break
+          // 送信中に追加された記録を失わないよう、最新のキューから送信済みIDだけを除く
+          const sentIds = new Set(batch.map((item) => item.id))
+          saveOutbox(loadOutbox(storage).filter((item) => !sentIds.has(item.id)), storage)
+          sent += batch.length
+        }
+        return { sent, remaining: loadOutbox(storage).length }
+      } finally {
+        // キューの終了判定からここまではawaitを挟まない。直後の記録は新しいdrainを開始できる。
+        if (flushPromise === pending) flushPromise = null
+      }
+    })()
+    flushPromise = pending
+    return flushPromise
   }
 
   async function recordCompletion(record) {

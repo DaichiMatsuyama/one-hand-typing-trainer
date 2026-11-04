@@ -1030,6 +1030,18 @@ h1 {
   margin: 0 0 8px;
 }
 
+.review-update-state {
+  margin: 2px 2px 8px;
+  color: #59616b;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.review-update-error {
+  color: #9f241d;
+}
+
 .review-viewing {
   display: flex;
   flex-wrap: wrap;

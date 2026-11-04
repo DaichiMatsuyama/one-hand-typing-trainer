@@ -124,16 +124,59 @@ describe('remoteSync', () => {
     const { sync, storage } = setup({ fetchImpl })
     const first = sync.recordCompletion(rec('a'))
     await Promise.resolve()
-    // 送信待ちの間に次のクリアが記録される(並行flushはスキップされ、キューには残る)
+    // 送信待ちの間に次のクリアが記録される(並行flushは同じPromiseを待ち、キューも処理する)
     const secondQueued = sync.recordCompletion(rec('b'))
     release()
     await first
     await secondQueued
-    await sync.flushPending()
+    // 追加のflushに頼らず、共有しているdrainの完了時点でBも送信済みであること
     expect(loadOutbox(storage)).toEqual([])
     const sentIds = fetchImpl.mock.calls.flatMap(([, init]) => JSON.parse(init.body).records.map((r) => r.id))
     expect(sentIds).toContain('a')
     expect(sentIds).toContain('b')
+  })
+
+  it('送信中のflushPendingを再度呼ぶと、二重送信せず同じ完了を待つ', async () => {
+    let release
+    const gate = new Promise((resolve) => { release = resolve })
+    const fetchImpl = vi.fn(async () => {
+      await gate
+      return ok()
+    })
+    const { sync, storage } = setup({ fetchImpl })
+
+    const sending = sync.recordCompletion(rec('a'))
+    await Promise.resolve()
+    const waiting = sync.flushPending()
+    let finished = false
+    waiting.then(() => { finished = true })
+    await Promise.resolve()
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(finished).toBe(false)
+    release()
+    await Promise.all([sending, waiting])
+    expect(finished).toBe(true)
+    expect(loadOutbox(storage)).toEqual([])
+  })
+
+  it('空のflushが完了したあとに追加された記録も送る', async () => {
+    const { sync, fetchImpl, storage } = setup()
+    await sync.flushPending()
+    await sync.recordCompletion(rec('later'))
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(loadOutbox(storage)).toEqual([])
+  })
+
+  it('空のflush直後にawaitせず追加した記録も、共有Promiseの完了までに送る', async () => {
+    const { sync, fetchImpl, storage } = setup()
+    const flushing = sync.flushPending()
+    const recording = sync.recordCompletion(rec('later'))
+
+    await Promise.all([flushing, recording])
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(loadOutbox(storage)).toEqual([])
   })
 
   it('壊れた保存値のキューは空として扱う', () => {

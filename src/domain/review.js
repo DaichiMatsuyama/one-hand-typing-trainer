@@ -5,6 +5,38 @@ const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 // キーごとのミスの割合を出すのに必要な、最低限の出題回数(少なすぎる回数の割合は信用しない)
 export const MIN_SHOWN_FOR_RATE = 3
 
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function hasNumbers(value, fields) {
+  return isObject(value) && fields.every((field) => Number.isFinite(value[field]))
+}
+
+/** 振り返り画面が描画に使うGAS集計の形かを確認する。 */
+export function isReviewStats(value) {
+  if (!isObject(value)
+    || !hasNumbers(value.totals, ['records', 'practiceMs', 'days'])
+    || !hasNumbers(value.today, ['records', 'practiceMs', 'attempts', 'mistakes'])
+    || !Number.isFinite(value.streak)
+    || !Array.isArray(value.daily)
+    || !isObject(value.keys)
+    || !Array.isArray(value.confusions)) return false
+
+  const validDaily = value.daily.every((day) => (
+    hasNumbers(day, ['records', 'practiceMs', 'attempts', 'mistakes'])
+    && typeof day.date === 'string'
+  ))
+  const validKeys = Object.values(value.keys).every((key) => hasNumbers(key, ['shown', 'misses']))
+  const validConfusions = value.confusions.every((item) => (
+    isObject(item)
+    && typeof item.expected === 'string'
+    && typeof item.pressed === 'string'
+    && Number.isFinite(item.count)
+  ))
+  return validDaily && validKeys && validConfusions
+}
+
 export function accuracyPercent(attempts, mistakes) {
   if (!attempts) return null
   return Math.round(((attempts - mistakes) / attempts) * 100)
