@@ -305,7 +305,8 @@ describe('App', () => {
     expect(wrapper.get('.keyboard-panel').classes()).toContain('complete')
     expect(wrapper.get('.feedback').text()).toBe('クリア！ 自動で次の問題に進みます')
     expect(wrapper.find('[data-testid="next-question"]').exists()).toBe(false)
-    expect(wrapper.findAll('.key').every((key) => key.element.disabled)).toBe(true)
+    expect(wrapper.findAll('.key').every((key) => key.attributes('aria-disabled') === 'true')).toBe(true)
+    expect(wrapper.findAll('.key').every((key) => key.attributes('disabled') === undefined)).toBe(true)
 
     wrapper.getComponent(KeyboardView).vm.$emit('press', 'x')
     await wrapper.vm.$nextTick()
