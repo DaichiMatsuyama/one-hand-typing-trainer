@@ -2,10 +2,11 @@ import { getElapsedMs } from './practiceSession.js'
 
 /**
  * 画面に出す累計成績。保存済みの累計(results)に、まだクリアしていない
- * 進行中の問題(session)の分を足す。クリア済みの問題は results に加算済みなので二重に足さない。
+ * 進行中の問題(session)の分を足す。クリア済み、またはresultsへ移管済みの問題は
+ * 二重に足さない。
  */
 export function getTotalStats(results, session, now = Date.now()) {
-  const pending = session.isComplete ? null : session
+  const pending = session.isComplete || session.preserved ? null : session
   const attempts = results.attempts + (pending?.attempts ?? 0)
   const correctCount = results.correctCount + (pending?.correctCount ?? 0)
   return {

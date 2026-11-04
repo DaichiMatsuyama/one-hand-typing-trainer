@@ -1,7 +1,9 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import PracticeScreen from './components/PracticeScreen.vue'
+import ResultScreen from './components/ResultScreen.vue'
 import ReviewView from './components/ReviewView.vue'
+import SettingsScreen from './components/SettingsScreen.vue'
 import { usePracticeEngine } from './composables/usePracticeEngine.js'
 import { REMOTE_ENDPOINT } from './remoteConfig.js'
 import { loadAccess } from './services/access.js'
@@ -9,6 +11,20 @@ import { remoteSync } from './services/remoteSync.js'
 
 const engine = usePracticeEngine()
 const { settings, layoutPitchCount } = engine
+const screen = ref('settings')
+
+function startPractice() {
+  engine.startRun()
+  screen.value = 'practice'
+}
+
+function showResult() {
+  screen.value = 'result'
+}
+
+function showSettings() {
+  screen.value = 'settings'
+}
 
 // 縦向きの振り返り画面は、送信先が設定され、コード入力済みの端末だけで使える(それ以外は従来の回転案内)
 const reviewAccess = REMOTE_ENDPOINT ? loadAccess() : null
@@ -50,7 +66,19 @@ onBeforeUnmount(() => {
     :data-layout-variant="settings.layoutVariant"
     :style="{ '--keyboard-pitch-count': layoutPitchCount }"
   >
-    <PracticeScreen :engine="engine" />
+    <SettingsScreen v-if="screen === 'settings'" :engine="engine" @start="startPractice" />
+    <PracticeScreen
+      v-else-if="screen === 'practice'"
+      :engine="engine"
+      @settings="showSettings"
+      @finish="showResult"
+    />
+    <ResultScreen
+      v-else
+      :summary="engine.runSummary.value"
+      @again="startPractice"
+      @settings="showSettings"
+    />
   </div>
 
   <ReviewView

@@ -21,14 +21,14 @@ describe('Root(利用制限)', () => {
 
   it('送信先が未設定なら制限なしで練習画面が出る', () => {
     const wrapper = mount(Root, { props: { endpoint: '' } })
-    expect(wrapper.find('.keyboard').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="settings-screen"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="access-gate"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
   it('localhostでは送信先があっても制限しない', () => {
     const wrapper = mount(Root, { props: { endpoint: ENDPOINT } })
-    expect(wrapper.find('.keyboard').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="settings-screen"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -51,7 +51,7 @@ describe('Root(利用制限)', () => {
 
     localStorage.setItem(ACCESS_KEY, JSON.stringify({ granted: true, code: 'abc12345', deviceId: 'dev-1', grantedAt: 1 }))
     const open = mount(Root, { props: { endpoint: ENDPOINT } })
-    expect(open.find('.keyboard').exists()).toBe(true)
+    expect(open.find('[data-testid="settings-screen"]').exists()).toBe(true)
     expect(open.find('[data-testid="access-gate"]').exists()).toBe(false)
     open.unmount()
   })
@@ -61,7 +61,7 @@ describe('Root(利用制限)', () => {
     Object.defineProperty(window.navigator, 'standalone', { configurable: true, value: true })
     const wrapper = mount(Root, { props: { endpoint: ENDPOINT } })
     await wrapper.getComponent({ name: 'AccessGate' }).vm.$emit('granted')
-    expect(wrapper.find('.keyboard').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="settings-screen"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })

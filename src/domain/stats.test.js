@@ -33,6 +33,18 @@ describe('getTotalStats', () => {
     expect(stats.elapsedMs).toBe(1500)
     expect(stats.accuracy).toBe(100)
   })
+
+  it('移管済みの未完了セッションも累計へ二重に足さない', () => {
+    let session = createPracticeSession('ab', 0)
+    session = { ...submitKey(session, 'a', 500), preserved: true }
+    const results = { completedQuestions: 0, correctCount: 1, mistakes: 0, attempts: 1, practiceMs: 500 }
+
+    expect(getTotalStats(results, session, 5000)).toMatchObject({
+      correctCount: 1,
+      attempts: 1,
+      elapsedMs: 500,
+    })
+  })
 })
 
 describe('formatDuration', () => {

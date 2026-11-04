@@ -36,12 +36,13 @@ describe('practiceSession', () => {
   })
 
   it('保存した途中位置と統計を復元する', () => {
-    const saved = submitKey(createPracticeSession('asd', 1000), 'a', 1500)
+    const saved = { ...submitKey(createPracticeSession('asd', 1000), 'a', 1500), preserved: true }
     const restored = restorePracticeSession(saved, 'asd', 3000)
     expect(restored.position).toBe(1)
     expect(restored.correctCount).toBe(1)
     expect(restored.elapsedMs).toBe(500)
     expect(restored.startedAt).toBe(2500)
+    expect(restored.preserved).toBe(true)
   })
 
   it('問題が変わった保存データは引き継がない', () => {

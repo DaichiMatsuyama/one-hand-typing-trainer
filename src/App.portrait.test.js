@@ -12,6 +12,7 @@ vi.mock('./services/remoteSync.js', () => ({
 
 const { default: App } = await import('./App.vue')
 const { AUTO_ADVANCE_MS } = await import('./appConfig.js')
+const { startPractice } = await import('./test/app.js')
 
 // 縦向き(練習画面が隠れる)の状態を、テストから切り替えられるmatchMediaの代用品
 function installMatchMedia(initialPortrait) {
@@ -66,6 +67,7 @@ describe('縦向きの間は練習時間を止める', () => {
   it('縦向きにしている間は時間が進まず、横向きに戻すと続きから数える', async () => {
     const orientation = installMatchMedia(false)
     const wrapper = mount(App)
+    await startPractice(wrapper)
     await tick(wrapper, 5000)
     expect(elapsed(wrapper)).toBe('0:05')
 
@@ -82,6 +84,7 @@ describe('縦向きの間は練習時間を止める', () => {
   it('縦向きのまま起動したときも、時間は進まない', async () => {
     const orientation = installMatchMedia(true)
     const wrapper = mount(App)
+    await startPractice(wrapper)
     await tick(wrapper, 30_000)
     expect(elapsed(wrapper)).toBe('0:00')
 
@@ -94,6 +97,7 @@ describe('縦向きの間は練習時間を止める', () => {
   it('クリア直後に縦向きにしても、次の問題の時間は横向きに戻すまで始まらない', async () => {
     const orientation = installMatchMedia(false)
     const wrapper = mount(App)
+    await startPractice(wrapper)
     const expected = wrapper.get('.prompt-text .current').text()
     await tick(wrapper, 2000)
     await wrapper.get(`[data-key="${expected}"]`).trigger('click') // Lv.1は1文字でクリア
@@ -115,6 +119,7 @@ describe('縦向きの間は練習時間を止める', () => {
   it('スプレッドシートへ送る1問ごとの所要時間に、縦向きの間の時間を含めない', async () => {
     const orientation = installMatchMedia(false)
     const wrapper = mount(App)
+    await startPractice(wrapper)
     const expected = wrapper.get('.prompt-text .current').text()
     await tick(wrapper, 2000)
     orientation.set(true)
@@ -131,6 +136,7 @@ describe('縦向きの間は練習時間を止める', () => {
   it('向きの変更イベントが届かなくても、1秒ごとの確認で停止・再開する', async () => {
     const orientation = installMatchMedia(false)
     const wrapper = mount(App)
+    await startPractice(wrapper)
     await tick(wrapper, 5000)
     expect(elapsed(wrapper)).toBe('0:05')
 
@@ -149,6 +155,7 @@ describe('縦向きの間は練習時間を止める', () => {
   it('縦向きの間も、アプリが隠れたときと同じく状態を保存し、アンマウントで監視を外す', async () => {
     const orientation = installMatchMedia(false)
     const wrapper = mount(App)
+    await startPractice(wrapper)
     await tick(wrapper, 1000)
     orientation.set(true)
     const saved = JSON.parse(localStorage.getItem('one-hand-typing-trainer:v1'))

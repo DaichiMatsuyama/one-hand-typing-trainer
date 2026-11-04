@@ -32,8 +32,8 @@ describe('縦向きの振り返り画面の出し分け', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="review-screen"]').exists()).toBe(true)
     expect(wrapper.find('.rotate-notice').exists()).toBe(false)
-    // 練習画面は残っている(縦向きのときだけCSSで隠す)
-    expect(wrapper.find('.keyboard').exists()).toBe(true)
+    // 起動時の設定画面は残っている(縦向きのときだけCSSで隠す)
+    expect(wrapper.find('[data-testid="settings-screen"]').exists()).toBe(true)
     wrapper.unmount()
   })
 

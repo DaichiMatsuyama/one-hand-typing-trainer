@@ -11,6 +11,7 @@ export function createPracticeSession(question, now = Date.now()) {
     mistakes: 0,
     isComplete: false,
     isPaused: false,
+    preserved: false,
     startedAt: now,
     elapsedMs: 0,
     feedback: null,
@@ -99,6 +100,7 @@ export function restorePracticeSession(savedSession, question, now = Date.now())
     mistakes,
     isComplete: position === question.length,
     isPaused: false,
+    preserved: savedSession.preserved === true,
     elapsedMs,
     feedback: null,
   }

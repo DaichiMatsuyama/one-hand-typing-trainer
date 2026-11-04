@@ -81,12 +81,11 @@ describe('実機向けレイアウト', () => {
       keyGapMax: cssPxVariable('key-gap-max'),
       shellInlineMin: cssPxVariable('shell-inline-min'),
       shellBlockMin: cssPxVariable('shell-block-min'),
-      stripControlsWidth: cssPxVariable('strip-controls-width'),
-      stripCompactControlsWidth: cssPxVariable('strip-compact-controls-width'),
       stripPromptMinimumWidth: cssPxVariable('strip-prompt-min'),
       stripStatsWidth: cssPxVariable('strip-stats-width'),
       stripCompactStatsWidth: cssPxVariable('strip-compact-stats-width'),
       stripActionWidth: cssPxVariable('strip-action-width'),
+      stripMenuWidth: cssPxVariable('strip-menu-width'),
       stripGridGap: cssPxVariable('strip-grid-gap'),
       stripInlinePadding: cssPxVariable('strip-inline-padding'),
       stripResultGap: cssPxVariable('strip-result-gap'),
@@ -115,9 +114,9 @@ describe('実機向けレイアウト', () => {
     expect(styles).toContain('var(--key-pitch) * var(--keyboard-pitch-count)')
     expect(styles).toContain('minmax(var(--strip-prompt-min), 1fr)')
     expect(styles).toMatch(/\.prompt-card\.complete\s*\{\s*gap:\s*0/)
-    expect(styles).toContain('width: var(--strip-controls-width)')
     expect(styles).toContain('width: var(--strip-stats-width)')
     expect(styles).toContain('width: var(--strip-action-width)')
+    expect(styles).toContain('width: var(--strip-menu-width)')
     expect(styles).toContain('- var(--keyboard-panel-border-block) - var(--key-shadow-depth)) / 3')
     expect(styles).toContain('0 var(--key-shadow-depth) 0')
     expect(styles).toMatch(/\.info-strip\s*\{[\s\S]*?border:\s*1px solid/)
@@ -164,8 +163,8 @@ describe('実機向けレイアウト', () => {
     expect(metrics.availableWidth).toBe(655)
     expect(metrics.stripClientWidth).toBe(653)
     expect(metrics.isCompact).toBe(true)
-    expect(metrics.normalStripWidth).toBe(627)
-    expect(metrics.completeStripWidth).toBe(627)
+    expect(metrics.normalStripWidth).toBe(421)
+    expect(metrics.completeStripWidth).toBe(421)
     expect(metrics.requiredStripWidth).toBeLessThanOrEqual(metrics.stripClientWidth)
     expect(styles).toMatch(/@container\s+practice[\s\S]*?\.stats div:last-child\s*\{\s*display:\s*none/)
     expect(styles).not.toMatch(/\.result-bar\.complete \.stats\s*\{\s*display:\s*none/)

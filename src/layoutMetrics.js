@@ -20,14 +20,12 @@ export const LANDSCAPE_LAYOUT = Object.freeze({
   shellInlineMin: 6,
   shellBlockMin: 5,
   legendMinimumWidth: 52,
-  // 667px幅の実DOMで、左手時の操作部は約288px、成績4項目は約182pxだった。
-  // ボタンは日本語ラベルを含めて50pxを確保し、CSSでも同じ固定値を使用する。
-  stripControlsWidth: 288,
-  stripCompactControlsWidth: 272,
+  // 設定操作を別画面へ移し、情報帯は問題・累計・やり直す・メニューで構成する。
   stripPromptMinimumWidth: 186,
   stripStatsWidth: 182,
   stripCompactStatsWidth: 112,
   stripActionWidth: 50,
+  stripMenuWidth: 66,
   stripGridGap: 3,
   stripInlinePadding: 2,
   stripResultGap: 3,
@@ -119,9 +117,6 @@ export function calculateLandscapeLayout({
     : keyboardInnerWidth - keyboardWidth
   const stripClientWidth = availableWidth - config.infoStripBorderInline
   const isCompact = availableWidth <= config.compactBreakpoint
-  const controlsWidth = isCompact
-    ? config.stripCompactControlsWidth
-    : config.stripControlsWidth
   const statsWidth = isCompact
     ? config.stripCompactStatsWidth
     : config.stripStatsWidth
@@ -134,16 +129,16 @@ export function calculateLandscapeLayout({
     : config.stripResultGap
   const gapsAndPadding = 2 * gridGap + 2 * inlinePadding
   const normalResultWidth = statsWidth + resultGap + config.stripActionWidth
-  const normalStripWidth = controlsWidth
-    + config.stripPromptMinimumWidth
+  const normalStripWidth = config.stripPromptMinimumWidth
     + normalResultWidth
+    + config.stripMenuWidth
     + gapsAndPadding
   const completeStripWidth = normalStripWidth
   const requiredStripWidth = normalStripWidth
   const promptAvailableWidth = availableWidth
     - config.infoStripBorderInline
-    - controlsWidth
     - normalResultWidth
+    - config.stripMenuWidth
     - gapsAndPadding
 
   return {

@@ -13,13 +13,7 @@ vi.mock('./services/remoteSync.js', () => ({
 
 const { default: App } = await import('./App.vue')
 const { AUTO_ADVANCE_MS } = await import('./appConfig.js')
-
-async function completeCurrentQuestion(wrapper) {
-  while (wrapper.find('.prompt-text .current').exists()) {
-    const expected = wrapper.get('.prompt-text .current').text()
-    await wrapper.get(`[data-key="${expected}"]`).trigger('click')
-  }
-}
+const { completeCurrentQuestion, startPractice } = await import('./test/app.js')
 
 describe('App から練習記録を送る', () => {
   beforeEach(() => {
@@ -38,6 +32,7 @@ describe('App から練習記録を送る', () => {
 
   it('1問クリアごとに一度だけ記録を渡し、押し間違いを含める', async () => {
     const wrapper = mount(App)
+    await startPractice(wrapper)
     const expected = wrapper.get('.prompt-text .current').text()
     const wrong = wrapper.findAll('.key').map((key) => key.attributes('data-key')).find((key) => key !== expected)
     await wrapper.get(`[data-key="${wrong}"]`).trigger('click')
@@ -67,6 +62,7 @@ describe('App から練習記録を送る', () => {
 
   it('次の問題の押し間違いは、前の問題の記録に混ざらない', async () => {
     const wrapper = mount(App)
+    await startPractice(wrapper)
     const first = wrapper.get('.prompt-text .current').text()
     const wrongFirst = wrapper.findAll('.key').map((key) => key.attributes('data-key')).find((key) => key !== first)
     await wrapper.get(`[data-key="${wrongFirst}"]`).trigger('click')
@@ -83,6 +79,7 @@ describe('App から練習記録を送る', () => {
 
   it('やり直しやリセットでは記録を送らない', async () => {
     const wrapper = mount(App)
+    await startPractice(wrapper)
     const expected = wrapper.get('.prompt-text .current').text()
     // Lv.1は1文字でクリアになるので、誤タップのあとにやり直す
     const wrong = wrapper.findAll('.key').map((key) => key.attributes('data-key')).find((key) => key !== expected)
@@ -95,6 +92,7 @@ describe('App から練習記録を送る', () => {
   it('送信が失敗しても(例外・reject)練習は止まらず、クリア処理が続く', async () => {
     sync.recordCompletion.mockImplementationOnce(() => { throw new Error('boom') })
     const first = mount(App)
+    await startPractice(first)
     await completeCurrentQuestion(first)
     expect(first.get('[data-testid="completed"]').text()).toBe('1問')
     first.unmount()
@@ -102,6 +100,7 @@ describe('App から練習記録を送る', () => {
     localStorage.clear()
     sync.recordCompletion.mockImplementationOnce(() => Promise.reject(new Error('offline')))
     const second = mount(App)
+    await startPractice(second)
     await completeCurrentQuestion(second)
     expect(second.get('[data-testid="completed"]').text()).toBe('1問')
     second.unmount()

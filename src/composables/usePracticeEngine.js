@@ -10,6 +10,7 @@ import {
   restorePracticeSession,
   submitKey,
 } from '../domain/practiceSession.js'
+import { summarizeRunStats } from '../domain/run.js'
 import { formatDuration, getTotalStats } from '../domain/stats.js'
 import { buildCompletionRecord } from '../services/completionRecord.js'
 import { remoteSync } from '../services/remoteSync.js'
@@ -26,6 +27,14 @@ const RESET_NOTICE_MS = 2000
 const MAX_WRONG_KEYS = 50
 const PORTRAIT_QUERY = '(orientation: portrait) and (max-width: 700px)'
 
+function createInactiveSession(question, timestamp) {
+  return {
+    ...createPracticeSession(question, timestamp),
+    isPaused: true,
+    preserved: true,
+  }
+}
+
 function createInitialState(storage, timestamp) {
   try {
     const saved = loadAppState(storage)
@@ -33,11 +42,16 @@ function createInitialState(storage, timestamp) {
     const initialResults = { ...defaultResults, ...(saved?.results ?? {}) }
     const initialQuestionIndex = saved?.questionIndex ?? 0
     const question = getQuestion(initialSettings, initialQuestionIndex)
+    const hasSavedSession = saved?.session?.question === question
+    const restoredSession = restorePracticeSession(saved?.session, question, timestamp)
     return {
       settings: initialSettings,
       results: initialResults,
       questionIndex: initialQuestionIndex,
-      session: restorePracticeSession(saved?.session, question, timestamp),
+      // 起動時は設定画面なので時計を進めず、保存時点のelapsedMsだけを引き継ぐ。
+      session: hasSavedSession
+        ? pausePracticeSession(restoredSession, timestamp)
+        : createInactiveSession(question, timestamp),
     }
   } catch {
     clearAppState(storage)
@@ -47,7 +61,7 @@ function createInitialState(storage, timestamp) {
       settings: initialSettings,
       results: { ...defaultResults },
       questionIndex: 0,
-      session: createPracticeSession(question, timestamp),
+      session: createInactiveSession(question, timestamp),
     }
   }
 }
@@ -68,6 +82,7 @@ export function usePracticeEngine({
   const now = ref(initialTimestamp)
   const resetNotice = ref('')
   const wrongKeys = ref([])
+  const run = ref(null)
   const pauseReasons = reactive(new Set())
 
   const questionOptions = computed(() => ({ ...settings.value }))
@@ -86,6 +101,15 @@ export function usePracticeEngine({
   // 画面の時間・正答率・ミス・クリア数は、リセットするまでの累計
   const totalStats = computed(() => getTotalStats(results.value, session.value, now.value))
   const elapsedText = computed(() => formatDuration(totalStats.value.elapsedMs))
+  const runSummary = computed(() => {
+    if (!run.value) return summarizeRunStats({}, {})
+    if (run.value.summary) return run.value.summary
+    return summarizeRunStats(
+      totalStats.value,
+      { ...run.value.baseline, elapsedMs: run.value.baseline.practiceMs },
+      run.value.menuOpenCount,
+    )
+  })
 
   const portraitQuery = typeof win?.matchMedia === 'function'
     ? win.matchMedia(PORTRAIT_QUERY)
@@ -196,14 +220,21 @@ export function usePracticeEngine({
   // 未クリアの問題を手動で捨てる前に、画面に出ている進行中の累計をresultsへ移す。
   // クリア済みはpressKey()で移動済みなので対象にしない。
   function preservePendingSession(timestamp = getNow()) {
-    if (session.value.isComplete) return
+    if (session.value.isComplete || session.value.preserved) return false
+    const preservedElapsedMs = getElapsedMs(session.value, timestamp)
     results.value = {
       ...results.value,
       correctCount: results.value.correctCount + session.value.correctCount,
       mistakes: results.value.mistakes + session.value.mistakes,
       attempts: results.value.attempts + session.value.attempts,
-      practiceMs: results.value.practiceMs + getElapsedMs(session.value, timestamp),
+      practiceMs: results.value.practiceMs + preservedElapsedMs,
     }
+    session.value = {
+      ...session.value,
+      elapsedMs: preservedElapsedMs,
+      preserved: true,
+    }
+    return true
   }
 
   function changePractice(nextSettings) {
@@ -212,6 +243,66 @@ export function usePracticeEngine({
     settings.value = { ...settings.value, ...nextSettings }
     questionIndex.value = 0
     beginQuestion(null, timestamp)
+  }
+
+  // 設定画面用のsessionは時計を進めず、次のrunの累計にも含めない。
+  function updateSettings(partial) {
+    const timestamp = getNow()
+    preservePendingSession(timestamp)
+    settings.value = { ...settings.value, ...partial }
+    questionIndex.value = 0
+    now.value = timestamp
+    session.value = createInactiveSession(currentQuestion.value, timestamp)
+    wrongKeys.value = []
+    cancelAutoAdvance()
+    snapshot(timestamp)
+  }
+
+  function startRun() {
+    const timestamp = getNow()
+    // 再読み込み前の未完了分は、このrunのbaselineを作る前に一度だけ累計へ移す。
+    preservePendingSession(timestamp)
+    setPauseReason('menu', false, timestamp)
+    run.value = {
+      startedAt: timestamp,
+      baseline: { ...results.value },
+      menuOpenCount: 0,
+      summary: null,
+    }
+    beginQuestion(null, timestamp)
+  }
+
+  // 結果を確定してから途中問題を累計へ移し、次のrunでも累計を維持する。
+  function finishRun({ keepPaused = false } = {}) {
+    if (!run.value) return runSummary.value
+    const timestamp = getNow()
+    now.value = timestamp
+    if (!run.value.summary) {
+      const summary = { ...runSummary.value }
+      preservePendingSession(timestamp)
+      run.value = { ...run.value, summary }
+    }
+    // summary確定・途中成績の移管と同じタイムスタンプでmenu停止を外す。
+    // sessionはpreserved済みなので、再開されても成績には影響しない。
+    if (!keepPaused) setPauseReason('menu', false, timestamp)
+    snapshot(timestamp)
+    return run.value.summary
+  }
+
+  function openMenu() {
+    if (pauseReasons.has('menu')) return false
+    cancelAutoAdvance()
+    if (run.value) {
+      run.value = { ...run.value, menuOpenCount: run.value.menuOpenCount + 1 }
+    }
+    setPauseReason('menu', true)
+    return true
+  }
+
+  function closeMenu() {
+    const changed = setPauseReason('menu', false)
+    if (changed && session.value.isComplete) scheduleAutoAdvance()
+    return changed
   }
 
   function selectHand(hand) {
@@ -227,7 +318,7 @@ export function usePracticeEngine({
   }
 
   function pressKey(key) {
-    if (session.value.isComplete) return
+    if (session.value.isComplete || session.value.preserved || pauseReasons.has('menu')) return
     clearTimeout(feedbackTimer)
     const wasComplete = session.value.isComplete
     const expectedKey = session.value.question[session.value.position]
@@ -256,20 +347,27 @@ export function usePracticeEngine({
   }
 
   function resetQuestion() {
+    if (pauseReasons.has('menu')) return false
     const timestamp = getNow()
     preservePendingSession(timestamp)
     beginQuestion(null, timestamp)
+    return true
   }
 
   // 「やり直す」の長押し: 累計成績もすべてゼロにして、今の問題を最初からやり直す
   function resetAllStats() {
+    if (pauseReasons.has('menu')) return false
     results.value = { ...defaultResults }
+    if (run.value) {
+      run.value = { ...run.value, baseline: { ...defaultResults }, summary: null }
+    }
     beginQuestion()
     resetNotice.value = '成績をすべてリセットしました'
     clearTimeout(noticeTimer)
     noticeTimer = setTimeout(() => {
       resetNotice.value = ''
     }, RESET_NOTICE_MS)
+    return true
   }
 
   function handlePageHide() {
@@ -333,6 +431,7 @@ export function usePracticeEngine({
     now,
     resetNotice,
     wrongKeys,
+    run,
     pauseReasons: readonly(pauseReasons),
     layout,
     layoutPitchCount,
@@ -341,6 +440,7 @@ export function usePracticeEngine({
     elapsedMs,
     totalStats,
     elapsedText,
+    runSummary,
     currentQuestion,
     pressKey,
     resetQuestion,
@@ -349,6 +449,11 @@ export function usePracticeEngine({
     selectLevel,
     toggleSymbols,
     changePractice,
+    updateSettings,
+    startRun,
+    finishRun,
+    openMenu,
+    closeMenu,
     beginQuestion,
     scheduleAutoAdvance,
     preservePendingSession,

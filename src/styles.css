@@ -86,12 +86,11 @@ input:focus-visible {
   --keyboard-pitch-count: 5.75;
   --shell-inline-min: 6px;
   --shell-block-min: 5px;
-  --strip-controls-width: 288px;
-  --strip-compact-controls-width: 272px;
   --strip-prompt-min: 186px;
   --strip-stats-width: 182px;
   --strip-compact-stats-width: 112px;
   --strip-action-width: 50px;
+  --strip-menu-width: 66px;
   --strip-grid-gap: 3px;
   --strip-inline-padding: 2px;
   --strip-result-gap: 3px;
@@ -159,7 +158,7 @@ input:focus-visible {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: max-content minmax(var(--strip-prompt-min), 1fr) max-content;
+  grid-template-columns: minmax(var(--strip-prompt-min), 1fr) max-content var(--strip-menu-width);
   align-items: center;
   gap: var(--strip-grid-gap);
   height: var(--info-strip-height);
@@ -171,33 +170,9 @@ input:focus-visible {
   box-shadow: 0 3px 12px rgb(50 56 63 / 8%);
 }
 
-.compact-header {
-  min-width: 0;
-}
-
-.brand {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 .brand-kicker,
 h1 {
   margin: 0;
-}
-
-.control-stack {
-  display: flex;
-  width: var(--strip-controls-width);
-  min-width: 0;
-  align-items: center;
-  gap: 3px;
 }
 
 .segmented {
@@ -438,6 +413,20 @@ h1 {
   justify-content: center;
 }
 
+.menu-button {
+  width: var(--strip-menu-width);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 2px 4px;
+  border: 1px solid #aaa296;
+  border-radius: 9px;
+  color: #303946;
+  background: white;
+  font-size: 0.68rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .primary-button,
 .secondary-button {
   width: var(--strip-action-width);
@@ -494,6 +483,226 @@ h1 {
   to {
     width: 100%;
   }
+}
+
+/* 設定画面 */
+.settings-screen,
+.run-result-screen {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  overflow: auto;
+}
+
+.settings-card,
+.run-result-card {
+  width: min(100%, 760px);
+  padding: clamp(12px, 3dvh, 20px) clamp(14px, 3vw, 26px);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgb(255 253 248 / 94%);
+  box-shadow: 0 5px 18px rgb(50 56 63 / 8%);
+}
+
+.settings-heading {
+  text-align: center;
+}
+
+.settings-heading .brand-kicker {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.settings-heading h1,
+.run-result-card h1 {
+  font-size: clamp(1.25rem, 5dvh, 1.75rem);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.8fr) minmax(290px, 1.4fr) minmax(145px, 0.8fr);
+  gap: 10px;
+  margin: clamp(9px, 2dvh, 16px) 0;
+}
+
+.setting-group {
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: #f2f5ef;
+}
+
+.setting-group h2 {
+  margin: 0 0 6px;
+  color: #37404d;
+  font-size: 0.76rem;
+}
+
+.settings-screen .segmented {
+  width: 100%;
+}
+
+.settings-screen .segmented button {
+  flex: 1 1 0;
+  font-size: 0.82rem;
+}
+
+.level-lengths {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.settings-screen .symbol-toggle {
+  justify-content: flex-start;
+  font-size: 0.76rem;
+}
+
+.start-practice-button {
+  display: block;
+  width: min(100%, 320px);
+  min-height: 48px;
+  margin: 0 auto;
+  border: 1px solid var(--accent-dark);
+  border-radius: 11px;
+  color: white;
+  background: var(--accent);
+  font-size: 1rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.build-id {
+  position: absolute;
+  right: 4px;
+  bottom: 1px;
+  color: #657080;
+  font-size: 0.58rem;
+}
+
+/* 今回の練習結果 */
+.run-result-card {
+  width: min(100%, 680px);
+  text-align: center;
+}
+
+.run-result-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: clamp(10px, 2.5dvh, 18px) 0;
+}
+
+.run-result-grid div {
+  padding: 8px 6px;
+  border-radius: 11px;
+  background: #eef4f0;
+}
+
+.run-result-grid dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.run-result-grid dd {
+  margin: 3px 0 0;
+  font-size: clamp(1rem, 4dvh, 1.35rem);
+  font-weight: 850;
+}
+
+.run-result-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.run-result-actions button {
+  min-width: min(42%, 240px);
+  min-height: 48px;
+  padding: 5px 14px;
+  border-radius: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.result-again-button {
+  border: 1px solid var(--accent-dark);
+  color: white;
+  background: var(--accent);
+}
+
+.result-settings-button {
+  border: 1px solid #aaa296;
+  color: var(--ink);
+  background: white;
+}
+
+/* 練習中メニュー */
+.practice-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding:
+    max(10px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+  background: rgb(22 28 35 / 68%);
+}
+
+.practice-menu-dialog {
+  width: min(100%, 390px);
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--paper);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 28%);
+  text-align: center;
+}
+
+.practice-menu-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+}
+
+.practice-menu-actions,
+.practice-confirm-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.practice-confirm-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.practice-menu-dialog button {
+  min-height: 44px;
+  padding: 5px 14px;
+  border: 1px solid #aaa296;
+  border-radius: 10px;
+  color: var(--ink);
+  background: white;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.practice-menu-actions button:first-child,
+.practice-confirm-actions button:last-child {
+  border-color: var(--accent-dark);
+  color: white;
+  background: var(--accent);
 }
 
 .keyboard-panel {
@@ -717,31 +926,6 @@ h1 {
     padding-inline: var(--strip-compact-inline-padding);
   }
 
-  .control-stack {
-    width: var(--strip-compact-controls-width);
-    gap: 1px;
-  }
-
-  .symbol-label-full {
-    display: none;
-  }
-
-  .symbol-label-compact {
-    display: inline;
-  }
-
-  .symbol-label small {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
   .result-bar {
     gap: var(--strip-compact-result-gap);
   }
@@ -755,6 +939,22 @@ h1 {
     display: none;
   }
 
+}
+
+@media (max-width: 700px) and (orientation: landscape) {
+  .settings-card,
+  .run-result-card {
+    padding-block: 10px;
+  }
+
+  .settings-grid {
+    gap: 6px;
+    margin-block: 7px;
+  }
+
+  .setting-group {
+    padding: 6px 7px;
+  }
 }
 
 @media (orientation: portrait) and (max-width: 700px) {
