@@ -1,4 +1,5 @@
 import { PRACTICE_MODES } from '../appConfig.js'
+import { sanitizeKeyStats } from '../domain/keyStats.js'
 import { createDeviceId } from './access.js'
 
 export const HISTORY_KEY = 'one-hand-typing-trainer:history:v1'
@@ -33,6 +34,15 @@ function sanitizeRecord(record) {
   if (record.timeLimitSec !== null && timeLimitSec === null) return null
   const kpm = record.kpm === null ? null : nonNegativeInteger(record.kpm)
   if (record.kpm !== null && kpm === null) return null
+  const rankVersion = record.rankVersion == null ? null : nonNegativeInteger(record.rankVersion)
+  if (rankVersion !== null && rankVersion > 999) return null
+  if (record.rankVersion != null && rankVersion === null) return null
+  const messageId = typeof record.messageId === 'string'
+    && record.messageId.length > 0 && record.messageId.length <= 64
+    ? record.messageId
+    : null
+  const hasKeys = Object.hasOwn(record, 'keys')
+  const keys = hasKeys ? sanitizeKeyStats(record.keys) : undefined
 
   return {
     v: HISTORY_VERSION,
@@ -49,6 +59,9 @@ function sanitizeRecord(record) {
     endedBy: record.endedBy,
     ...integers,
     kpm,
+    ...(hasKeys ? { keys } : {}),
+    rankVersion,
+    messageId,
     appVersion: typeof record.appVersion === 'string' ? record.appVersion : 'dev',
   }
 }

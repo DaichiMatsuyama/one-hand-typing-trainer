@@ -54,6 +54,7 @@ function createEngine(
   environment = createEnvironment(),
   storage = createMemoryStorage(),
   syncService = { recordCompletion: vi.fn(), recordRun: vi.fn() },
+  options = {},
 ) {
   return {
     environment,
@@ -63,6 +64,7 @@ function createEngine(
       ...environment,
       storage,
       syncService,
+      ...options,
     }),
   }
 }
@@ -769,5 +771,154 @@ describe('usePracticeEngine', () => {
     engine.startRun()
     expect(engine.resetQuestion()).toBe(true)
     expect(engine.resetAllStats()).toBe(true)
+  })
+
+  it('finishRunで分析を一度だけ確定し、keys・rankVersion・messageIdを履歴とrun送信へ入れる', () => {
+    const storage = createMemoryStorage()
+    const syncService = { recordCompletion: vi.fn(), recordRun: vi.fn() }
+    const random = vi.fn(() => 0)
+    const { engine } = createEngine(createEnvironment(), storage, syncService, { random })
+    engine.updateSettings({ mode: 'timeAttack', level: 2, targetCount: 10 })
+    engine.startRun()
+    const [first, second] = engine.session.value.question
+    const wrong = first === 'a' ? 's' : 'a'
+    engine.pressKey(wrong)
+    engine.pressKey(wrong)
+    engine.pressKey(first)
+    if (second) engine.pressKey(second)
+    vi.advanceTimersByTime(1000)
+
+    const summary = engine.finishRun({ endedBy: 'completed' })
+    const firstAnalysis = summary.analysis
+    engine.finishRun({ endedBy: 'completed' })
+
+    expect(engine.run.value.summary.analysis).toBe(firstAnalysis)
+    expect(random).toHaveBeenCalledTimes(1)
+    expect(firstAnalysis).toMatchObject({ rankVersion: 1, rank: expect.any(String) })
+    const history = loadHistory(storage)[0]
+    expect(history.keys[first]).toEqual([1, 2])
+    if (second) expect(history.keys[second][0]).toBe(1)
+    expect(history).toMatchObject({ rankVersion: 1, messageId: firstAnalysis.message.id })
+    expect(syncService.recordRun).toHaveBeenCalledWith(expect.objectContaining({
+      keys: history.keys,
+      rankVersion: 1,
+      messageId: firstAnalysis.message.id,
+    }))
+  })
+
+  it('途中終了とフリーにはランク・自己ベスト・rankVersionを付けない', () => {
+    const storage = createMemoryStorage()
+    const competitive = createEngine(createEnvironment(), storage).engine
+    competitive.updateSettings({ mode: 'timeLimit', timeLimitSec: 30 })
+    competitive.startRun()
+    competitive.pressKey(competitive.nextKey.value)
+    const ended = competitive.finishRun({ endedBy: 'ended' })
+    expect(ended.analysis).toMatchObject({ rank: null, rankVersion: null, personalBest: null })
+    expect(loadHistory(storage)[0].rankVersion).toBeNull()
+
+    const freeStorage = createMemoryStorage()
+    const free = createEngine(createEnvironment(), freeStorage).engine
+    free.startRun()
+    free.pressKey(free.nextKey.value)
+    const freeSummary = free.finishRun({ endedBy: 'ended' })
+    expect(freeSummary.analysis).toMatchObject({ rank: null, rankVersion: null, personalBest: null })
+    expect(loadHistory(freeStorage)[0].rankVersion).toBeNull()
+  })
+
+  it('フリー2回目は同条件の直前runと比べて成長と応援メッセージを出す', () => {
+    const random = vi.fn(() => 0)
+    const { engine } = createEngine(createEnvironment(), createMemoryStorage(), undefined, { random })
+
+    engine.startRun()
+    const firstKey = engine.nextKey.value
+    engine.pressKey(firstKey === 'a' ? 's' : 'a')
+    vi.advanceTimersByTime(2000)
+    engine.pressKey(firstKey)
+    engine.finishRun({ endedBy: 'ended' })
+
+    engine.startRun()
+    vi.advanceTimersByTime(1000)
+    engine.pressKey(engine.nextKey.value)
+    const second = engine.finishRun({ endedBy: 'ended' })
+
+    expect(second.analysis).toMatchObject({ rank: null, personalBest: null })
+    expect(second.analysis.growth.improvements.map(({ type }) => type)).toEqual(['kpm', 'accuracy', 'mistakes'])
+    expect(second.analysis.message.id).toMatch(/^accuracy-/)
+    expect(second.analysis.message.text).toContain('正確さ')
+  })
+
+  it('最後に表示したmessageIdを履歴から初期化し、入力ゼロの結果間でも更新する', () => {
+    const storage = createMemoryStorage()
+    const firstEngine = createEngine(
+      createEnvironment(), storage, undefined, { random: () => 0 },
+    ).engine
+
+    firstEngine.startRun()
+    vi.advanceTimersByTime(1000)
+    firstEngine.pressKey(firstEngine.nextKey.value)
+    firstEngine.finishRun({ endedBy: 'ended' })
+    firstEngine.startRun()
+    vi.advanceTimersByTime(1000)
+    firstEngine.pressKey(firstEngine.nextKey.value)
+    const saved = firstEngine.finishRun({ endedBy: 'ended' })
+    expect(saved.analysis.message.id).toBe('general-free-1')
+
+    const reloaded = createEngine(
+      createEnvironment(), storage, undefined, { random: () => 0 },
+    ).engine
+    reloaded.startRun()
+    const firstZeroInput = reloaded.finishRun({ endedBy: 'ended' })
+    reloaded.startRun()
+    const secondZeroInput = reloaded.finishRun({ endedBy: 'ended' })
+
+    expect(firstZeroInput.attempts).toBe(0)
+    expect(firstZeroInput.analysis.message.id).toBe('general-free-2')
+    expect(secondZeroInput.attempts).toBe(0)
+    expect(secondZeroInput.analysis.message.id).toBe('general-free-1')
+    expect(loadHistory(storage)).toHaveLength(2)
+  })
+
+  it('履歴に残らない入力ゼロの結果が続いても同じmessageIdを繰り返さない', () => {
+    const { engine, storage } = createEngine(
+      createEnvironment(), createMemoryStorage(), undefined, { random: () => 0 },
+    )
+
+    engine.startRun()
+    const first = engine.finishRun({ endedBy: 'ended' })
+    engine.startRun()
+    const second = engine.finishRun({ endedBy: 'ended' })
+
+    expect(first.attempts).toBe(0)
+    expect(second.attempts).toBe(0)
+    expect(first.analysis.message.id).toBe('first-1')
+    expect(second.analysis.message.id).toBe('first-2')
+    expect(loadHistory(storage)).toEqual([])
+  })
+
+  it('競技モードを完了した回はKPMを算出できなくてもrankVersionを残す', () => {
+    const { engine, storage } = createEngine()
+    engine.updateSettings({ mode: 'timeAttack' })
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    const result = engine.finishRun({ endedBy: 'completed' })
+    expect(result.kpm).toBeNull()
+    expect(result.analysis).toMatchObject({ rank: null, rankVersion: 1, personalBest: null })
+    expect(loadHistory(storage)[0].rankVersion).toBe(1)
+  })
+
+  it('制限時間切れの途中問題も、実際に打ったキーだけkeysへ含める', () => {
+    const { engine, storage } = createEngine()
+    engine.updateSettings({ mode: 'timeLimit', timeLimitSec: 30, level: 2 })
+    engine.startRun()
+    const first = engine.nextKey.value
+    engine.pressKey(first)
+    const second = engine.nextKey.value
+    engine.pressKey(second === 'a' ? 's' : 'a')
+    vi.advanceTimersByTime(30_000)
+    engine.pressKey(second)
+
+    const keys = loadHistory(storage)[0].keys
+    expect(keys[first][0]).toBe(1)
+    expect(keys[second]).toEqual([1, 1])
   })
 })

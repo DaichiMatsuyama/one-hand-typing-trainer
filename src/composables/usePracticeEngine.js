@@ -13,9 +13,17 @@ import {
 } from '../domain/practiceSession.js'
 import { summarizeRunStats } from '../domain/run.js'
 import { formatDuration, getTotalStats } from '../domain/stats.js'
+import { addKeyAttempt, findWeakKeys, sanitizeKeyStats } from '../domain/keyStats.js'
+import { selectMessage } from '../domain/messages.js'
+import {
+  analyzeGrowth,
+  analyzePersonalBest,
+  findPreviousCompleted,
+} from '../domain/personalBest.js'
+import { describeNextRank, evaluateRank, getRankScore, RANK_VERSION } from '../domain/rank.js'
 import { createDeviceId } from '../services/access.js'
 import { buildCompletionRecord } from '../services/completionRecord.js'
-import { appendHistory } from '../services/history.js'
+import { appendHistory, loadHistory } from '../services/history.js'
 import { remoteSync } from '../services/remoteSync.js'
 import {
   clearAppState,
@@ -77,6 +85,7 @@ export function usePracticeEngine({
   win = globalThis.window,
   doc = globalThis.document,
   getNow = () => Date.now(),
+  random = Math.random,
 } = {}) {
   const initialTimestamp = getNow()
   const initialState = createInitialState(storage, initialTimestamp)
@@ -149,6 +158,9 @@ export function usePracticeEngine({
   let noticeTimer
   let lastSnapshotAt = initialTimestamp
   let attached = false
+  let shownPositions = new Set()
+  // 入力ゼロの結果は履歴に残らないため、画面へ出したメッセージはエンジン内でも引き継ぐ。
+  let lastDisplayedMessageId = loadHistory(storage)[0]?.messageId ?? null
 
   function getRunActiveMs(timestamp = getNow()) {
     if (!run.value || !run.value.clockStarted) return run.value?.activeMs ?? 0
@@ -236,7 +248,7 @@ export function usePracticeEngine({
   // 1回の練習結果を送信キューへ。履歴と同じIDを使い、送信失敗は画面遷移へ影響させない。
   function reportRun(record) {
     try {
-      const sending = syncService.recordRun({ ...record, rankVersion: null })
+      const sending = syncService.recordRun(record)
       sending?.catch?.(() => {})
     } catch {
       // 記録の失敗で練習を止めない
@@ -255,6 +267,7 @@ export function usePracticeEngine({
 
   function beginQuestion(savedSession = null, timestamp = getNow()) {
     wrongKeys.value = []
+    shownPositions = new Set()
     cancelAutoAdvance()
     clearTimeout(feedbackTimer)
     feedbackTimer = undefined
@@ -350,12 +363,13 @@ export function usePracticeEngine({
       activeMs: 0,
       // 停止の理由が残っているときは、時計を動かさない(解除されたときに動き出す)。
       activeStartedAt: clockStarted && pauseReasons.size === 0 ? timestamp : null,
+      keys: {},
       summary: null,
     }
     beginQuestion(null, timestamp)
   }
 
-  function buildHistoryRecord(summary, timestamp, id) {
+  function buildHistoryRecord(summary, timestamp, id, { keys = {}, rankVersion = null, messageId = null } = {}) {
     return {
       id,
       ts: new Date(timestamp).toISOString(),
@@ -377,7 +391,42 @@ export function usePracticeEngine({
       accuracy: summary.accuracy,
       kpm: summary.kpm,
       menuOpenCount: summary.menuOpenCount,
+      keys: sanitizeKeyStats(keys),
+      rankVersion,
+      messageId,
       appVersion: BUILD_COMMIT,
+    }
+  }
+
+  function analyzeRun(summary, record, history) {
+    const rankEligible = summary.mode !== 'free' && summary.endedBy !== 'ended'
+    const rank = rankEligible ? evaluateRank({ ...summary, level: settings.value.level }) : null
+    const rankVersion = rankEligible ? RANK_VERSION : null
+    const rankedRecord = { ...record, rankVersion }
+    const personalBest = rank === null ? null : analyzePersonalBest(rankedRecord, history)
+    const growth = analyzeGrowth(rankedRecord, history)
+    const previous = findPreviousCompleted(rankedRecord, history)
+    const previousRank = previous ? evaluateRank(previous) : null
+    const rankUp = Boolean(rank && previousRank && getRankScore(rank) > getRankScore(previousRank))
+    const weakKeys = findWeakKeys([rankedRecord, ...history], rankedRecord.hand)
+    const message = selectMessage({
+      rank,
+      rankUp,
+      personalBest,
+      isFirstPractice: history.length === 0,
+      growth,
+      weakKeys,
+      endedEarly: summary.endedBy === 'ended' && summary.mode !== 'free',
+      previousMessageId: lastDisplayedMessageId,
+    }, random)
+    return {
+      rank,
+      rankVersion,
+      nextRank: rank ? describeNextRank({ ...summary, level: settings.value.level, rank }) : null,
+      personalBest,
+      growth,
+      weakKeys,
+      message,
     }
   }
 
@@ -400,13 +449,24 @@ export function usePracticeEngine({
         activeMs: Math.max(0, Math.round(activeMs)),
         endedBy,
       }
+      const history = loadHistory(storage)
+      const initialRecord = buildHistoryRecord(summary, timestamp, createDeviceId(), {
+        keys: run.value.keys,
+      })
+      const analysis = analyzeRun(summary, initialRecord, history)
+      lastDisplayedMessageId = analysis.message.id
+      const finalSummary = { ...summary, analysis }
       preservePendingSession(timestamp)
       // 終了後に、自動で次へ進むタイマーや結果前の表示が残らないようにする。
       cancelAutoAdvance()
       session.value = pausePracticeSession(session.value, timestamp)
-      run.value = { ...run.value, activeMs: summary.activeMs, activeStartedAt: null, summary }
-      if (summary.attempts > 0) {
-        const record = buildHistoryRecord(summary, timestamp, createDeviceId())
+      run.value = { ...run.value, activeMs: finalSummary.activeMs, activeStartedAt: null, summary: finalSummary }
+      if (finalSummary.attempts > 0) {
+        const record = {
+          ...initialRecord,
+          rankVersion: analysis.rankVersion,
+          messageId: analysis.message.id,
+        }
         appendHistory(record, storage)
         reportRun(record)
       }
@@ -495,6 +555,17 @@ export function usePracticeEngine({
     const wasComplete = session.value.isComplete
     const expectedKey = session.value.question[session.value.position]
     const pressedKey = String(key).toLowerCase()
+    if (run.value) {
+      const firstAttemptAtPosition = !shownPositions.has(session.value.position)
+      shownPositions.add(session.value.position)
+      run.value = {
+        ...run.value,
+        keys: addKeyAttempt(run.value.keys, expectedKey, {
+          shown: firstAttemptAtPosition,
+          missed: pressedKey !== expectedKey,
+        }),
+      }
+    }
     if (pressedKey !== expectedKey && wrongKeys.value.length < MAX_WRONG_KEYS) {
       wrongKeys.value.push([expectedKey, pressedKey])
     }
@@ -552,6 +623,7 @@ export function usePracticeEngine({
         baseline: { ...defaultResults },
         activeMs: 0,
         activeStartedAt: run.value.clockStarted && pauseReasons.size === 0 ? timestamp : null,
+        keys: {},
         summary: null,
       }
     }

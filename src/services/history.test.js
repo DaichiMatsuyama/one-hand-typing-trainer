@@ -33,6 +33,9 @@ function record(index = 0) {
     accuracy: 100,
     kpm: null,
     menuOpenCount: 0,
+    keys: { a: [1, 0] },
+    rankVersion: null,
+    messageId: 'first-1',
     appVersion: 'dev',
   }
 }
@@ -68,5 +71,35 @@ describe('練習履歴', () => {
     }
     expect(loadHistory(broken)).toEqual([])
     expect(appendHistory(record(), broken)).toBe(false)
+  })
+
+  it('keys・rankVersion・messageIdをサニタイズする', () => {
+    const storage = memoryStorage()
+    expect(appendHistory({
+      ...record(),
+      keys: { A: [5, 2], '?': [8, 4], s: [-1, 0], d: [3] },
+      rankVersion: 1,
+      messageId: 'rank-up-1',
+    }, storage)).toBe(true)
+    expect(loadHistory(storage)[0]).toMatchObject({
+      keys: { a: [5, 2] },
+      rankVersion: 1,
+      messageId: 'rank-up-1',
+    })
+
+    expect(appendHistory({ ...record(2), rankVersion: 1000 }, storage)).toBe(false)
+    expect(appendHistory({ ...record(3), messageId: 'x'.repeat(65) }, storage)).toBe(true)
+    expect(loadHistory(storage)[0].messageId).toBeNull()
+  })
+
+  it('新項目がない旧記録もversion 1のまま読める', () => {
+    const storage = memoryStorage()
+    const legacy = record()
+    delete legacy.keys
+    delete legacy.rankVersion
+    delete legacy.messageId
+    storage.setItem(HISTORY_KEY, JSON.stringify([legacy]))
+    expect(loadHistory(storage)[0]).toMatchObject({ id: 'run-0', rankVersion: null, messageId: null })
+    expect(loadHistory(storage)[0]).not.toHaveProperty('keys')
   })
 })
