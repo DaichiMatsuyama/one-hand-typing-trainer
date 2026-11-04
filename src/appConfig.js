@@ -1,4 +1,6 @@
 export const AUTO_ADVANCE_MS = 600
+// 練習中の表示時間を実時間へ追従させる間隔
+export const CLOCK_TICK_MS = 200
 // 「やり直す」を長押しして今回の成績をリセットするまでの時間
 export const LONG_PRESS_RESET_MS = 800
 // 振り返り画面の見出しを長押しして、管理者表示を開くまでの時間(画面には何も表示しない)

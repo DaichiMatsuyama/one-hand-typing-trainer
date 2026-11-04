@@ -1,5 +1,5 @@
 import { computed, readonly, reactive, ref } from 'vue'
-import { AUTO_ADVANCE_MS } from '../appConfig.js'
+import { AUTO_ADVANCE_MS, CLOCK_TICK_MS } from '../appConfig.js'
 import { getFinger, getKeyboardLayout, getLayoutPitchCount } from '../data/keyboardLayouts.js'
 import { getQuestion } from '../data/questionBank.js'
 import {
@@ -23,6 +23,7 @@ import {
 } from '../services/storage.js'
 
 const SNAPSHOT_INTERVAL_MS = 5000
+const ENVIRONMENT_SYNC_INTERVAL_MS = 1000
 const RESET_NOTICE_MS = 2000
 const MAX_WRONG_KEYS = 50
 const PORTRAIT_QUERY = '(orientation: portrait) and (max-width: 700px)'
@@ -115,7 +116,8 @@ export function usePracticeEngine({
     ? win.matchMedia(PORTRAIT_QUERY)
     : null
 
-  let timer
+  let clockTimer
+  let maintenanceTimer
   let feedbackTimer
   let autoAdvanceTimer
   let noticeTimer
@@ -389,16 +391,21 @@ export function usePracticeEngine({
   function attach() {
     if (attached) return
     attached = true
-    timer = setInterval(() => {
+    // 表示時計だけを細かく進め、停止理由の確認と保存は従来の頻度に保つ。
+    clockTimer = setInterval(() => {
+      if (!session.value.isPaused && !session.value.isComplete) {
+        now.value = getNow()
+      }
+    }, CLOCK_TICK_MS)
+    maintenanceTimer = setInterval(() => {
       const timestamp = getNow()
-      now.value = timestamp
       // 向きの変更イベントが届かない環境の保険: 1秒ごとに停止理由をそろえる
       syncEnvironmentPauseReasons(timestamp)
       if (!session.value.isPaused && !session.value.isComplete
         && timestamp - lastSnapshotAt >= SNAPSHOT_INTERVAL_MS) {
         snapshot(timestamp)
       }
-    }, 1000)
+    }, ENVIRONMENT_SYNC_INTERVAL_MS)
     win?.addEventListener('pagehide', handlePageHide)
     win?.addEventListener('pageshow', handlePageShow)
     doc?.addEventListener('visibilitychange', handleVisibilityChange)
@@ -410,8 +417,10 @@ export function usePracticeEngine({
   function detach() {
     if (!attached) return
     attached = false
-    clearInterval(timer)
-    timer = undefined
+    clearInterval(clockTimer)
+    clockTimer = undefined
+    clearInterval(maintenanceTimer)
+    maintenanceTimer = undefined
     clearTimeout(feedbackTimer)
     feedbackTimer = undefined
     clearTimeout(noticeTimer)

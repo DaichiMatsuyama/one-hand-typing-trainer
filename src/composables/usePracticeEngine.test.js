@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AUTO_ADVANCE_MS } from '../appConfig.js'
+import { AUTO_ADVANCE_MS, CLOCK_TICK_MS } from '../appConfig.js'
 import { getElapsedMs } from '../domain/practiceSession.js'
 import { usePracticeEngine } from './usePracticeEngine.js'
 
@@ -105,7 +105,7 @@ describe('usePracticeEngine', () => {
     const { engine, environment } = createEngine()
 
     engine.attach()
-    expect(vi.getTimerCount()).toBe(1)
+    expect(vi.getTimerCount()).toBe(2)
     expect(listenerCount(environment.win)).toBe(2)
     expect(listenerCount(environment.doc)).toBe(1)
     expect(listenerCount(environment.portrait)).toBe(1)
@@ -122,18 +122,66 @@ describe('usePracticeEngine', () => {
 
     engine.attach()
     engine.attach()
-    expect(vi.getTimerCount()).toBe(1)
+    expect(vi.getTimerCount()).toBe(2)
     expect(listenerCount(environment.win)).toBe(2)
 
     engine.detach()
     engine.attach()
-    expect(vi.getTimerCount()).toBe(1)
+    expect(vi.getTimerCount()).toBe(2)
     expect(listenerCount(environment.win)).toBe(2)
     expect(listenerCount(environment.doc)).toBe(1)
     expect(listenerCount(environment.portrait)).toBe(1)
 
     engine.detach()
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('表示時計は200ms以内で追従し、メニューを開いても表示秒が増えない', () => {
+    const { engine } = createEngine()
+    engine.startRun()
+    engine.attach()
+
+    vi.advanceTimersByTime(1950)
+    expect(Date.now() - engine.now.value).toBeLessThanOrEqual(CLOCK_TICK_MS)
+    expect(engine.elapsedMs.value).toBe(1800)
+    expect(engine.runElapsedText.value).toBe('0:01')
+
+    engine.openMenu()
+    expect(engine.elapsedMs.value).toBe(1950)
+    expect(engine.runElapsedText.value).toBe('0:01')
+
+    engine.closeMenu()
+    vi.advanceTimersByTime(50)
+    expect(engine.elapsedMs.value).toBe(2000)
+    expect(engine.runElapsedText.value).toBe('0:02')
+  })
+
+  it('細かい表示tickでも停止判定は1秒ごと、保存は5秒ごとに行う', () => {
+    const environment = createEnvironment()
+    const storage = createMemoryStorage()
+    const matchesRead = vi.fn(() => false)
+    Object.defineProperty(environment.portrait, 'matches', {
+      configurable: true,
+      get: matchesRead,
+    })
+    const save = vi.spyOn(storage, 'setItem')
+    const { engine } = createEngine(environment, storage)
+    engine.startRun()
+    engine.attach()
+    matchesRead.mockClear()
+    save.mockClear()
+
+    vi.advanceTimersByTime(1000 - CLOCK_TICK_MS)
+    expect(matchesRead).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(CLOCK_TICK_MS)
+    expect(matchesRead).toHaveBeenCalledTimes(1)
+    expect(save).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(4000)
+    expect(matchesRead).toHaveBeenCalledTimes(5)
+    expect(save).toHaveBeenCalledTimes(1)
   })
 
   it('startRunは累計をbaselineにして今回をゼロから始める', () => {
