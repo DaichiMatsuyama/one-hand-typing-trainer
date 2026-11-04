@@ -1,3 +1,12 @@
+import {
+  DEFAULT_PRACTICE_MODE,
+  DEFAULT_TARGET_COUNT,
+  DEFAULT_TIME_LIMIT_SEC,
+  PRACTICE_MODES,
+  TIME_ATTACK_COUNTS,
+  TIME_LIMIT_SECONDS,
+} from '../appConfig.js'
+
 export const STORAGE_KEY = 'one-hand-typing-trainer:v1'
 export const STORAGE_VERSION = 1
 
@@ -6,6 +15,9 @@ export const defaultSettings = Object.freeze({
   level: 1,
   includeSymbols: false,
   layoutVariant: 'jis',
+  mode: DEFAULT_PRACTICE_MODE,
+  targetCount: DEFAULT_TARGET_COUNT,
+  timeLimitSec: DEFAULT_TIME_LIMIT_SEC,
 })
 
 export const defaultResults = Object.freeze({
@@ -23,6 +35,13 @@ function sanitizeSettings(settings = {}) {
     level: [1, 2, 3].includes(Number(source.level)) ? Number(source.level) : 1,
     includeSymbols: Boolean(source.includeSymbols),
     layoutVariant: source.layoutVariant === 'us' ? 'us' : 'jis',
+    mode: PRACTICE_MODES.includes(source.mode) ? source.mode : DEFAULT_PRACTICE_MODE,
+    targetCount: TIME_ATTACK_COUNTS.includes(source.targetCount)
+      ? source.targetCount
+      : DEFAULT_TARGET_COUNT,
+    timeLimitSec: TIME_LIMIT_SECONDS.includes(source.timeLimitSec)
+      ? source.timeLimitSec
+      : DEFAULT_TIME_LIMIT_SEC,
   }
 }
 

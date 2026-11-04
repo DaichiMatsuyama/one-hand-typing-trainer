@@ -1,5 +1,6 @@
 <script setup>
 import { BUILD_ID } from '../buildInfo.js'
+import { TIME_ATTACK_COUNTS, TIME_LIMIT_SECONDS } from '../appConfig.js'
 import LevelSelector from './LevelSelector.vue'
 
 const props = defineProps({
@@ -19,6 +20,29 @@ function selectLevel(level) {
 
 function toggleSymbols(event) {
   updateSettings({ includeSymbols: event.target.checked })
+}
+
+function selectMode(mode) {
+  if (mode !== settings.value.mode) updateSettings({ mode })
+}
+
+function selectTargetCount(targetCount) {
+  updateSettings({ targetCount })
+}
+
+function selectTimeLimit(timeLimitSec) {
+  updateSettings({ timeLimitSec })
+}
+
+const modeLabels = { free: 'フリー', timeAttack: 'タイムアタック', timeLimit: '制限時間' }
+const modeDescriptions = {
+  free: '時間も問題数も気にせず練習',
+  timeAttack: '規定の問題数を、できるだけ速く',
+  timeLimit: '決まった時間で、何問できるか',
+}
+
+function limitLabel(seconds) {
+  return seconds < 60 ? `${seconds}秒` : `${seconds / 60}分`
 }
 </script>
 
@@ -77,6 +101,52 @@ function toggleSymbols(event) {
           </label>
         </section>
       </div>
+
+      <section class="mode-setting-row" aria-labelledby="mode-setting-title">
+        <div class="mode-setting-main">
+          <h2 id="mode-setting-title">練習モード</h2>
+          <fieldset class="segmented mode-selector" aria-label="練習モード">
+            <legend class="visually-hidden">練習モード</legend>
+            <button
+              v-for="mode in ['free', 'timeAttack', 'timeLimit']"
+              :key="mode"
+              type="button"
+              :class="{ selected: settings.mode === mode }"
+              :aria-pressed="settings.mode === mode"
+              :data-testid="`mode-${mode}`"
+              @click="selectMode(mode)"
+            >{{ modeLabels[mode] }}</button>
+          </fieldset>
+        </div>
+
+        <fieldset v-if="settings.mode === 'timeAttack'" class="segmented mode-options" aria-label="問題数">
+          <legend class="visually-hidden">問題数</legend>
+          <button
+            v-for="count in TIME_ATTACK_COUNTS"
+            :key="count"
+            type="button"
+            :class="{ selected: settings.targetCount === count }"
+            :aria-pressed="settings.targetCount === count"
+            :data-testid="`count-${count}`"
+            @click="selectTargetCount(count)"
+          >{{ count }}問</button>
+        </fieldset>
+
+        <fieldset v-if="settings.mode === 'timeLimit'" class="segmented mode-options" aria-label="制限時間">
+          <legend class="visually-hidden">制限時間</legend>
+          <button
+            v-for="seconds in TIME_LIMIT_SECONDS"
+            :key="seconds"
+            type="button"
+            :class="{ selected: settings.timeLimitSec === seconds }"
+            :aria-pressed="settings.timeLimitSec === seconds"
+            :data-testid="`limit-${seconds}`"
+            @click="selectTimeLimit(seconds)"
+          >{{ limitLabel(seconds) }}</button>
+        </fieldset>
+
+        <p class="mode-description" data-testid="mode-description">{{ modeDescriptions[settings.mode] }}</p>
+      </section>
 
       <button type="button" class="start-practice-button" data-testid="start-practice" @click="emit('start')">
         練習を始める

@@ -19,6 +19,10 @@ const {
   nextFinger,
   runSummary,
   runElapsedText,
+  runActiveText,
+  remainingMs,
+  remainingText,
+  waitingForFirstKey,
   pressKey,
   resetQuestion,
   resetAllStats,
@@ -39,13 +43,13 @@ function closeMenu({ restoreFocus = true } = {}) {
 }
 
 function goToSettings() {
-  props.engine.finishRun()
+  props.engine.abandonRun()
   menuOpen.value = false
   emit('settings')
 }
 
 function finishPractice() {
-  props.engine.finishRun()
+  props.engine.finishRun({ endedBy: 'ended' })
   menuOpen.value = false
   emit('finish')
 }
@@ -70,10 +74,16 @@ onBeforeUnmount(() => props.engine.detach())
         :hand="settings.hand"
         :layout-variant="settings.layoutVariant"
         :is-complete="session.isComplete"
+        :start-hint="waitingForFirstKey"
       />
 
       <ResultView
         :elapsed-text="runElapsedText"
+        :active-text="runActiveText"
+        :remaining-text="remainingText"
+        :remaining-ms="remainingMs"
+        :mode="settings.mode"
+        :target-count="settings.targetCount"
         :accuracy="runSummary.accuracy"
         :mistakes="runSummary.mistakes"
         :is-complete="session.isComplete"

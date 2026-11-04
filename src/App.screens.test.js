@@ -216,6 +216,91 @@ describe('設定・練習・結果の3画面', () => {
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).results.practiceMs).toBe(999)
     wrapper.unmount()
   })
+
+  it('モードに応じて問題数・制限時間の選択を出し分け、選択を保存する', async () => {
+    const wrapper = mount(App)
+    expect(wrapper.find('[data-testid="count-10"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="limit-30"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="mode-description"]').text()).toContain('時間も問題数も')
+
+    await wrapper.get('[data-testid="mode-timeAttack"]').trigger('click')
+    expect(wrapper.find('[data-testid="count-10"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="limit-30"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="count-30"]').trigger('click')
+
+    await wrapper.get('[data-testid="mode-timeLimit"]').trigger('click')
+    expect(wrapper.find('[data-testid="count-10"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="limit-30"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="limit-120"]').trigger('click')
+
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY))).toMatchObject({
+      settings: { mode: 'timeLimit', targetCount: 30, timeLimitSec: 120 },
+      questionIndex: 0,
+    })
+    wrapper.unmount()
+  })
+
+  it('競技モードは最初のキーで表示を切り替え、やり直すを表示しない', async () => {
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="mode-timeAttack"]').trigger('click')
+    await startPractice(wrapper)
+    expect(wrapper.get('[data-testid="start-hint"]').text()).toBe('最初のキーでスタート')
+    expect(wrapper.find('[data-testid="reset"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="progress"]').text()).toBe('0/10')
+    expect(wrapper.get('[data-testid="elapsed"]').text()).toBe('0:00')
+
+    await wrapper.get(`[data-key="${wrapper.get('.prompt-text .current').text()}"]`).trigger('click')
+    expect(wrapper.find('[data-testid="start-hint"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="progress"]').text()).toBe('1/10')
+    wrapper.unmount()
+  })
+
+  it('タイムアタックを全問完了するとクリアタイムとn/n問の結果を表示する', async () => {
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="mode-timeAttack"]').trigger('click')
+    await startPractice(wrapper)
+
+    for (let index = 0; index < 10; index += 1) {
+      await completeCurrentQuestion(wrapper)
+      vi.advanceTimersByTime(AUTO_ADVANCE_MS)
+      await wrapper.vm.$nextTick()
+    }
+
+    expect(wrapper.get('h1').text()).toBe('タイムアタック 結果')
+    expect(wrapper.get('[data-testid="result-clear-time"]').text()).toBe('0:05.4')
+    expect(wrapper.get('[data-testid="result-count"]').text()).toBe('10/10問')
+    wrapper.unmount()
+  })
+
+  it('制限時間は残り時間と完了数を表示し、時間切れですぐ結果へ進む', async () => {
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="mode-timeLimit"]').trigger('click')
+    await wrapper.get('[data-testid="limit-30"]').trigger('click')
+    await startPractice(wrapper)
+    expect(wrapper.get('[data-testid="remaining"]').text()).toBe('0:30')
+    expect(wrapper.find('[data-testid="reset"]').exists()).toBe(false)
+    await completeCurrentQuestion(wrapper)
+
+    vi.advanceTimersByTime(30_000)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('h1').text()).toBe('制限時間 結果')
+    expect(wrapper.get('[data-testid="result-count"]').text()).toBe('1問')
+    expect(wrapper.get('[data-testid="result-limit"]').text()).toBe('30秒')
+    wrapper.unmount()
+  })
+
+  it('競技モードを手動終了すると途中終了と進捗を表示する', async () => {
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="mode-timeAttack"]').trigger('click')
+    await startPractice(wrapper)
+    await completeCurrentQuestion(wrapper)
+    await confirmFinish(wrapper)
+
+    expect(wrapper.get('h1').text()).toContain('タイムアタック 結果(途中終了)')
+    expect(wrapper.get('[data-testid="result-ended-early"]').text()).toBe('途中終了')
+    expect(wrapper.get('[data-testid="result-count"]').text()).toBe('1/10問')
+    wrapper.unmount()
+  })
 })
 
 describe('練習中メニュー', () => {

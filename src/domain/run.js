@@ -24,3 +24,10 @@ export function summarizeRunStats(current, baseline, menuOpenCount = 0) {
     menuOpenCount: Math.max(0, menuOpenCount),
   }
 }
+
+export function formatClearTime(ms) {
+  const tenths = Math.max(0, Math.floor(ms / 100))
+  const minutes = Math.floor(tenths / 600)
+  const seconds = String(Math.floor((tenths % 600) / 10)).padStart(2, '0')
+  return `${minutes}:${seconds}.${tenths % 10}`
+}

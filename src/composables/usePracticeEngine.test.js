@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AUTO_ADVANCE_MS, CLOCK_TICK_MS } from '../appConfig.js'
 import { getElapsedMs } from '../domain/practiceSession.js'
+import { loadHistory } from '../services/history.js'
 import { usePracticeEngine } from './usePracticeEngine.js'
 
 function createMemoryStorage() {
@@ -229,6 +230,18 @@ describe('usePracticeEngine', () => {
     expect(engine.run.value.baseline.practiceMs).toBe(0)
   })
 
+  it('モード・問題数・制限時間の変更では問題番号を保ち、手・レベル・記号の変更では0へ戻す', () => {
+    const { engine } = createEngine()
+    engine.questionIndex.value = 4
+    engine.updateSettings({ mode: 'timeAttack' })
+    engine.updateSettings({ targetCount: 30 })
+    engine.updateSettings({ timeLimitSec: 120 })
+    expect(engine.questionIndex.value).toBe(4)
+
+    engine.updateSettings({ level: 2 })
+    expect(engine.questionIndex.value).toBe(0)
+  })
+
   it('メニューを開いた回数を数え、表示中の入力を無視する', () => {
     const { engine } = createEngine()
     engine.startRun()
@@ -259,12 +272,12 @@ describe('usePracticeEngine', () => {
     expect(engine.results.value).toEqual(resultsBefore)
   })
 
-  it('前のmenu停止理由が残っていても次のstartRunで解除する', () => {
+  it('終了確定時にmenu停止理由を解除し、次のstartRunも停止なしで始める', () => {
     const { engine } = createEngine()
     engine.startRun()
     engine.openMenu()
-    engine.finishRun({ keepPaused: true })
-    expect(engine.pauseReasons.has('menu')).toBe(true)
+    engine.finishRun()
+    expect(engine.pauseReasons.has('menu')).toBe(false)
 
     engine.startRun()
     expect(engine.pauseReasons.has('menu')).toBe(false)
@@ -403,5 +416,221 @@ describe('usePracticeEngine', () => {
       attempts: firstQuestion.length + 2,
       inputMs: 1400,
     })
+  })
+
+  it('総経過時間はmenu・portrait・hiddenで止まり、最後の停止理由が外れると進む', () => {
+    const { engine } = createEngine()
+    engine.updateSettings({ mode: 'timeAttack' })
+    engine.startRun()
+    vi.advanceTimersByTime(2000)
+    expect(engine.runActiveMs.value).toBe(0)
+
+    engine.pressKey(engine.nextKey.value)
+    engine.setPauseReason('menu', true, 103_000)
+    expect(engine.runActiveMs.value).toBe(1000)
+    engine.setPauseReason('portrait', true, 104_000)
+    engine.setPauseReason('hidden', true, 105_000)
+    engine.setPauseReason('menu', false, 110_000)
+    engine.setPauseReason('portrait', false, 111_000)
+    expect(engine.runActiveMs.value).toBe(1000)
+    engine.setPauseReason('hidden', false, 112_000)
+    engine.setPauseReason('menu', true, 114_000)
+    expect(engine.runActiveMs.value).toBe(3000)
+  })
+
+  it('タイムアタックは最初のキーまで時計を動かさず、全問完了時に確定して以後の入力を無視する', () => {
+    const { engine, storage } = createEngine()
+    engine.updateSettings({ mode: 'timeAttack', targetCount: 10 })
+    engine.startRun()
+    vi.advanceTimersByTime(5000)
+    expect(engine.runActiveMs.value).toBe(0)
+    expect(engine.elapsedMs.value).toBe(0)
+
+    for (let index = 0; index < 10; index += 1) {
+      vi.advanceTimersByTime(100)
+      engine.pressKey(engine.nextKey.value)
+      if (index < 9) vi.advanceTimersByTime(AUTO_ADVANCE_MS)
+    }
+
+    expect(engine.runSummary.value).toMatchObject({
+      endedBy: 'completed',
+      completedQuestions: 10,
+      targetCount: 10,
+      activeMs: 6300,
+    })
+    expect(loadHistory(storage)[0]).toMatchObject({ endedBy: 'completed', activeMs: 6300 })
+    const attempts = engine.runSummary.value.attempts
+    engine.pressKey('a')
+    expect(engine.runSummary.value.attempts).toBe(attempts)
+    expect(loadHistory(storage)).toHaveLength(1)
+    expect(engine.resultReady.value).toBe(false)
+    vi.advanceTimersByTime(AUTO_ADVANCE_MS)
+    expect(engine.resultReady.value).toBe(true)
+  })
+
+  it('制限時間で入力途中を完了に数えず成績へ含め、時間切れ後の入力を無視する', () => {
+    const { engine, storage } = createEngine()
+    engine.updateSettings({ mode: 'timeLimit', timeLimitSec: 30, level: 2 })
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    vi.advanceTimersByTime(1000)
+    const wrong = engine.nextKey.value === 'a' ? 's' : 'a'
+    engine.pressKey(wrong)
+    vi.advanceTimersByTime(29_000)
+    engine.pressKey(engine.nextKey.value)
+
+    expect(engine.runSummary.value).toMatchObject({
+      endedBy: 'timeUp',
+      activeMs: 30_000,
+      inputMs: 30_000,
+      completedQuestions: 0,
+      correctCount: 1,
+      mistakes: 1,
+      attempts: 2,
+    })
+    engine.pressKey(engine.nextKey.value)
+    expect(engine.runSummary.value.attempts).toBe(2)
+    expect(loadHistory(storage)[0]).toMatchObject({ endedBy: 'timeUp', completedQuestions: 0 })
+  })
+
+  it('メニュー中は制限時間にならず、再開後に残り時間を使い切ると終了する', () => {
+    const { engine } = createEngine()
+    engine.updateSettings({ mode: 'timeLimit', timeLimitSec: 30, level: 2 })
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    vi.advanceTimersByTime(29_000)
+    engine.openMenu()
+    vi.advanceTimersByTime(10_000)
+    expect(engine.run.value.summary).toBeNull()
+    expect(engine.runActiveMs.value).toBe(29_000)
+    engine.closeMenu()
+    vi.advanceTimersByTime(1000)
+    engine.pressKey(engine.nextKey.value)
+    expect(engine.runSummary.value.endedBy).toBe('timeUp')
+  })
+
+  it('手動終了はendedとなり、二重終了・入力なし・設定へ戻る場合は履歴を重複または追加しない', () => {
+    const { engine, storage } = createEngine()
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    expect(engine.finishRun({ endedBy: 'ended' }).endedBy).toBe('ended')
+    engine.finishRun({ endedBy: 'ended' })
+    expect(loadHistory(storage)).toHaveLength(1)
+
+    engine.startRun()
+    engine.finishRun({ endedBy: 'ended' })
+    expect(loadHistory(storage)).toHaveLength(1)
+
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    engine.abandonRun()
+    expect(loadHistory(storage)).toHaveLength(1)
+  })
+
+  it('attach中は表示時計のtickで制限時間が終了し、総経過時間は制限時間に収まる', () => {
+    const { engine, storage } = createEngine()
+    engine.attach()
+    engine.updateSettings({ mode: 'timeLimit', timeLimitSec: 30, level: 2 })
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    vi.advanceTimersByTime(29_800)
+    expect(engine.run.value.summary).toBeNull()
+    vi.advanceTimersByTime(CLOCK_TICK_MS * 2)
+    expect(engine.runSummary.value).toMatchObject({ endedBy: 'timeUp', activeMs: 30_000 })
+    expect(engine.resultReady.value).toBe(true)
+    expect(loadHistory(storage)).toHaveLength(1)
+    engine.detach()
+  })
+
+  it('停止の直前に制限時間を過ぎていたら、portrait同期でも停止ではなく時間切れで終える', () => {
+    const environment = createEnvironment()
+    const { engine } = createEngine(environment)
+    engine.attach()
+    engine.updateSettings({ mode: 'timeLimit', timeLimitSec: 30, level: 2 })
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    // 時計のtickが走る前に30.5秒たち、向きが縦に変わった状態(pageshowなどの同期経路)
+    vi.setSystemTime(130_500)
+    environment.portrait.matches = true
+    environment.win.listeners.get('pageshow').forEach((listener) => listener())
+    expect(engine.runSummary.value).toMatchObject({ endedBy: 'timeUp', activeMs: 30_000 })
+    engine.detach()
+  })
+
+  it('停止の理由が残ったままstartRunしても、停止中は時計を動かさない', () => {
+    const environment = createEnvironment()
+    const { engine } = createEngine(environment)
+    environment.doc.hidden = true
+    engine.setPauseReason('hidden', true)
+    engine.startRun()
+    vi.advanceTimersByTime(5000)
+    // 停止が解除される前(停止中)に終えても、総経過時間は進まない
+    expect(engine.finishRun({ endedBy: 'ended' }).activeMs).toBe(0)
+  })
+
+  it('停止の理由が残ったままstartRunしても、解除した時点から時計が動き出す', () => {
+    const environment = createEnvironment()
+    const { engine } = createEngine(environment)
+    environment.doc.hidden = true
+    engine.setPauseReason('hidden', true)
+    engine.startRun()
+    vi.advanceTimersByTime(5000)
+    environment.doc.hidden = false
+    engine.setPauseReason('hidden', false)
+    vi.advanceTimersByTime(2000)
+    expect(engine.finishRun({ endedBy: 'ended' }).activeMs).toBe(2000)
+  })
+
+  it('startRunは残っているmenu停止理由を外して始める', () => {
+    const { engine } = createEngine()
+    engine.setPauseReason('menu', true)
+    engine.startRun()
+    expect(engine.pauseReasons.has('menu')).toBe(false)
+  })
+
+  it('終了したrunでは、自動で次へ進むタイマーが残らない', () => {
+    const { engine } = createEngine()
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    expect(engine.session.value.isComplete).toBe(true)
+    engine.finishRun({ endedBy: 'ended' })
+    vi.advanceTimersByTime(AUTO_ADVANCE_MS * 2)
+    expect(engine.questionIndex.value).toBe(0)
+    expect(engine.session.value.isComplete).toBe(true)
+  })
+
+  it('前のrunで最後に完了した問題から続けて始めず、完了していなければ同じ問題で始める', () => {
+    const { engine } = createEngine()
+    engine.startRun()
+    const first = engine.session.value.question
+    engine.pressKey(engine.nextKey.value)
+    engine.finishRun({ endedBy: 'ended' })
+    engine.startRun()
+    expect(engine.questionIndex.value).toBe(1)
+    expect(engine.session.value.question).not.toBe(first)
+    expect(engine.session.value.isComplete).toBe(false)
+
+    const second = engine.session.value.question
+    engine.finishRun({ endedBy: 'ended' })
+    engine.startRun()
+    expect(engine.questionIndex.value).toBe(1)
+    expect(engine.session.value.question).toBe(second)
+  })
+
+  it('タイムアタック・制限時間では、やり直しと全リセットをエンジンも拒否する', () => {
+    const { engine } = createEngine()
+    engine.updateSettings({ mode: 'timeAttack' })
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    const attempts = engine.runSummary.value.attempts
+    expect(engine.resetQuestion()).toBe(false)
+    expect(engine.resetAllStats()).toBe(false)
+    expect(engine.runSummary.value.attempts).toBe(attempts)
+
+    engine.finishRun({ endedBy: 'ended' })
+    engine.updateSettings({ mode: 'free' })
+    engine.startRun()
+    expect(engine.resetQuestion()).toBe(true)
+    expect(engine.resetAllStats()).toBe(true)
   })
 })

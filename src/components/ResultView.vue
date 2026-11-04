@@ -5,6 +5,11 @@ import { getKeySpokenName } from '../data/keyboardLayouts.js'
 
 const props = defineProps({
   elapsedText: { type: String, required: true },
+  activeText: { type: String, default: '0:00' },
+  remainingText: { type: String, default: '0:00' },
+  remainingMs: { type: Number, default: 0 },
+  mode: { type: String, default: 'free' },
+  targetCount: { type: Number, default: 10 },
   accuracy: { type: Number, required: true },
   mistakes: { type: Number, required: true },
   isComplete: { type: Boolean, default: false },
@@ -20,6 +25,8 @@ const emit = defineEmits(['reset', 'reset-all'])
 const nextInstruction = computed(() => (
   props.nextKey ? `${getKeySpokenName(props.nextKey)}キーを${props.nextFinger}で押してください` : ''
 ))
+const remainingUrgent = computed(() => props.mode === 'timeLimit'
+  && props.remainingMs > 0 && props.remainingMs <= 10_000)
 
 const liveMessage = computed(() => {
   if (props.notice) return props.notice
@@ -74,12 +81,26 @@ onBeforeUnmount(() => clearTimeout(pressTimer))
 </script>
 
 <template>
-  <section class="result-bar" :class="{ complete: isComplete }" aria-label="練習結果">
+  <section class="result-bar" :class="{ complete: isComplete, 'no-reset': mode !== 'free' }" aria-label="今回の練習成績">
     <dl class="stats">
-      <div><dt>時間</dt><dd data-testid="elapsed">{{ elapsedText }}</dd></div>
-      <div><dt>正答率</dt><dd data-testid="accuracy">{{ accuracy }}%</dd></div>
-      <div><dt>ミス</dt><dd data-testid="mistakes">{{ mistakes }}</dd></div>
-      <div><dt>クリア</dt><dd data-testid="completed">{{ completedQuestions }}問</dd></div>
+      <template v-if="mode === 'timeAttack'">
+        <div><dt>経過時間</dt><dd data-testid="elapsed" :aria-label="`経過時間 ${activeText}`">{{ activeText }}</dd></div>
+        <div><dt>進捗</dt><dd data-testid="progress" :aria-label="`進捗 ${completedQuestions}/${targetCount}問`">{{ completedQuestions }}/{{ targetCount }}</dd></div>
+        <div><dt>ミス</dt><dd data-testid="mistakes" :aria-label="`ミス ${mistakes}回`">{{ mistakes }}</dd></div>
+        <div><dt>正答率</dt><dd data-testid="accuracy" :aria-label="`正答率 ${accuracy}%`">{{ accuracy }}%</dd></div>
+      </template>
+      <template v-else-if="mode === 'timeLimit'">
+        <div :class="{ urgent: remainingUrgent }"><dt>残り時間</dt><dd data-testid="remaining" :aria-label="`残り時間 ${remainingText}`">{{ remainingText }}</dd></div>
+        <div><dt>クリア</dt><dd data-testid="completed" :aria-label="`クリア ${completedQuestions}問`">{{ completedQuestions }}問</dd></div>
+        <div><dt>ミス</dt><dd data-testid="mistakes" :aria-label="`ミス ${mistakes}回`">{{ mistakes }}</dd></div>
+        <div><dt>正答率</dt><dd data-testid="accuracy" :aria-label="`正答率 ${accuracy}%`">{{ accuracy }}%</dd></div>
+      </template>
+      <template v-else>
+        <div><dt>時間</dt><dd data-testid="elapsed" :aria-label="`入力時間 ${elapsedText}`">{{ elapsedText }}</dd></div>
+        <div><dt>正答率</dt><dd data-testid="accuracy" :aria-label="`正答率 ${accuracy}%`">{{ accuracy }}%</dd></div>
+        <div><dt>ミス</dt><dd data-testid="mistakes" :aria-label="`ミス ${mistakes}回`">{{ mistakes }}</dd></div>
+        <div><dt>クリア</dt><dd data-testid="completed" :aria-label="`クリア ${completedQuestions}問`">{{ completedQuestions }}問</dd></div>
+      </template>
     </dl>
 
     <p
@@ -90,7 +111,7 @@ onBeforeUnmount(() => clearTimeout(pressTimer))
       aria-atomic="true"
     >{{ liveMessage }}</p>
 
-    <div class="result-actions">
+    <div v-if="mode === 'free'" class="result-actions">
       <button
         type="button"
         class="secondary-button reset-button"

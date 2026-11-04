@@ -24,6 +24,7 @@ export const LANDSCAPE_LAYOUT = Object.freeze({
   stripPromptMinimumWidth: 186,
   stripStatsWidth: 182,
   stripCompactStatsWidth: 112,
+  stripModeStatsWidth: 216,
   stripActionWidth: 50,
   stripMenuWidth: 66,
   stripGridGap: 3,
@@ -129,15 +130,21 @@ export function calculateLandscapeLayout({
     : config.stripResultGap
   const gapsAndPadding = 2 * gridGap + 2 * inlinePadding
   const normalResultWidth = statsWidth + resultGap + config.stripActionWidth
+  const modeResultWidth = config.stripModeStatsWidth
   const normalStripWidth = config.stripPromptMinimumWidth
     + normalResultWidth
     + config.stripMenuWidth
     + gapsAndPadding
   const completeStripWidth = normalStripWidth
-  const requiredStripWidth = normalStripWidth
+  const modeStripWidth = config.stripPromptMinimumWidth
+    + modeResultWidth
+    + config.stripMenuWidth
+    + gapsAndPadding
+  const requiredStripWidth = Math.max(normalStripWidth, modeStripWidth)
+  const requiredResultWidth = Math.max(normalResultWidth, modeResultWidth)
   const promptAvailableWidth = availableWidth
     - config.infoStripBorderInline
-    - normalResultWidth
+    - requiredResultWidth
     - config.stripMenuWidth
     - gapsAndPadding
 
@@ -164,6 +171,7 @@ export function calculateLandscapeLayout({
     stripClientWidth,
     isCompact,
     normalStripWidth,
+    modeStripWidth,
     completeStripWidth,
     requiredStripWidth,
     promptAvailableWidth,

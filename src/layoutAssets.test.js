@@ -84,6 +84,7 @@ describe('実機向けレイアウト', () => {
       stripPromptMinimumWidth: cssPxVariable('strip-prompt-min'),
       stripStatsWidth: cssPxVariable('strip-stats-width'),
       stripCompactStatsWidth: cssPxVariable('strip-compact-stats-width'),
+      stripModeStatsWidth: cssPxVariable('strip-mode-stats-width'),
       stripActionWidth: cssPxVariable('strip-action-width'),
       stripMenuWidth: cssPxVariable('strip-menu-width'),
       stripGridGap: cssPxVariable('strip-grid-gap'),
@@ -115,6 +116,7 @@ describe('実機向けレイアウト', () => {
     expect(styles).toContain('minmax(var(--strip-prompt-min), 1fr)')
     expect(styles).toMatch(/\.prompt-card\.complete\s*\{\s*gap:\s*0/)
     expect(styles).toContain('width: var(--strip-stats-width)')
+    expect(styles).toContain('width: var(--strip-mode-stats-width)')
     expect(styles).toContain('width: var(--strip-action-width)')
     expect(styles).toContain('width: var(--strip-menu-width)')
     expect(styles).toContain('- var(--keyboard-panel-border-block) - var(--key-shadow-depth)) / 3')
@@ -164,9 +166,11 @@ describe('実機向けレイアウト', () => {
     expect(metrics.stripClientWidth).toBe(653)
     expect(metrics.isCompact).toBe(true)
     expect(metrics.normalStripWidth).toBe(421)
+    expect(metrics.modeStripWidth).toBe(474)
     expect(metrics.completeStripWidth).toBe(421)
     expect(metrics.requiredStripWidth).toBeLessThanOrEqual(metrics.stripClientWidth)
     expect(styles).toMatch(/@container\s+practice[\s\S]*?\.stats div:last-child\s*\{\s*display:\s*none/)
+    expect(styles).toMatch(/\.result-bar\.no-reset \.stats div:last-child\s*\{\s*display:\s*block/)
     expect(styles).not.toMatch(/\.result-bar\.complete \.stats\s*\{\s*display:\s*none/)
   })
 

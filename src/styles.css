@@ -89,6 +89,7 @@ input:focus-visible {
   --strip-prompt-min: 186px;
   --strip-stats-width: 182px;
   --strip-compact-stats-width: 112px;
+  --strip-mode-stats-width: 216px;
   --strip-action-width: 50px;
   --strip-menu-width: 66px;
   --strip-grid-gap: 3px;
@@ -258,6 +259,7 @@ h1 {
 }
 
 .prompt-card {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -265,6 +267,16 @@ h1 {
   justify-content: center;
   gap: 4px;
   overflow: hidden;
+}
+
+/* 現在の文字の下線と重ならないよう、問題文の右隣に置く */
+.start-hint {
+  flex: 0 1 auto;
+  margin-left: 8px;
+  color: var(--accent-dark);
+  font-size: 0.6rem;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .prompt-card.complete {
@@ -393,6 +405,17 @@ h1 {
   font-weight: 850;
   line-height: 1;
   white-space: nowrap;
+}
+
+.stats .urgent dt,
+.stats .urgent dd {
+  color: var(--danger);
+  font-weight: 950;
+}
+
+.result-bar.no-reset .stats {
+  width: var(--strip-mode-stats-width);
+  grid-template-columns: repeat(4, minmax(39px, 1fr));
 }
 
 .feedback {
@@ -530,6 +553,39 @@ h1 {
   margin: clamp(9px, 2dvh, 16px) 0;
 }
 
+.mode-setting-row {
+  display: grid;
+  grid-template-columns: minmax(250px, 1.25fr) minmax(190px, 1fr) minmax(150px, 0.8fr);
+  align-items: end;
+  gap: 8px;
+  margin: 0 0 clamp(8px, 1.5dvh, 12px);
+  padding: 7px 9px;
+  border-radius: 12px;
+  background: #f2f5ef;
+}
+
+.mode-setting-main h2 {
+  margin: 0 0 4px;
+  color: #37404d;
+  font-size: 0.76rem;
+}
+
+/* 「タイムアタック」が折り返さないよう、ラベルの長さに合わせて幅を配る */
+.settings-screen .mode-setting-row .segmented button {
+  flex: 1 1 auto;
+  padding-inline: 8px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.mode-description {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
 .setting-group {
   min-width: 0;
   padding: 9px 10px;
@@ -619,6 +675,27 @@ h1 {
   margin: 3px 0 0;
   font-size: clamp(1rem, 4dvh, 1.35rem);
   font-weight: 850;
+}
+
+.ended-early {
+  display: inline-block;
+  margin: 3px 0 0;
+  padding: 2px 8px;
+  border-radius: 99px;
+  color: #76202a;
+  background: #f8d9dc;
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.run-result-grid div.primary {
+  background: #dceee7;
+  box-shadow: inset 0 0 0 2px rgb(20 108 104 / 25%);
+}
+
+.run-result-grid div.primary dd {
+  color: var(--accent-dark);
+  font-size: clamp(1.45rem, 6dvh, 2rem);
 }
 
 .run-result-actions {
@@ -939,6 +1016,10 @@ h1 {
     display: none;
   }
 
+  .result-bar.no-reset .stats div:last-child {
+    display: block;
+  }
+
 }
 
 @media (max-width: 700px) and (orientation: landscape) {
@@ -954,6 +1035,13 @@ h1 {
 
   .setting-group {
     padding: 6px 7px;
+  }
+
+  .mode-setting-row {
+    grid-template-columns: minmax(235px, 1.2fr) minmax(175px, 0.9fr) minmax(125px, 0.65fr);
+    gap: 5px;
+    padding-block: 5px;
+    margin-bottom: 6px;
   }
 }
 

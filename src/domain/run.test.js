@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { summarizeRunStats } from './run.js'
+import { formatClearTime, summarizeRunStats } from './run.js'
 
 describe('1回の練習結果', () => {
   it('開始時の累計との差から正答率とKPMを計算する', () => {
@@ -58,5 +58,10 @@ describe('1回の練習結果', () => {
       kpm: null,
       menuOpenCount: 0,
     })
+  })
+
+  it('クリアタイムを分:秒.1桁で表示する', () => {
+    expect(formatClearTime(0)).toBe('0:00.0')
+    expect(formatClearTime(65_999)).toBe('1:05.9')
   })
 })

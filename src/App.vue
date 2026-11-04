@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import PracticeScreen from './components/PracticeScreen.vue'
 import ResultScreen from './components/ResultScreen.vue'
 import ReviewView from './components/ReviewView.vue'
@@ -12,6 +12,10 @@ import { remoteSync } from './services/remoteSync.js'
 const engine = usePracticeEngine()
 const { settings, layoutPitchCount } = engine
 const screen = ref('settings')
+
+watch(engine.resultReady, (ready) => {
+  if (ready) screen.value = 'result'
+})
 
 function startPractice() {
   engine.startRun()

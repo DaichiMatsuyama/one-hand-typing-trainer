@@ -375,7 +375,7 @@ describe('App', () => {
     }
   })
 
-  it('クリア済みのversion 1保存データがあっても新しいrunは新規問題で始まり、結果を二重加算しない', async () => {
+  it('クリア済みのversion 1保存データがあっても新しいrunはクリア済みの問題を繰り返さず次の問題で始まり、結果を二重加算しない', async () => {
     const settings = { hand: 'left', level: 1, includeSymbols: false, layoutVariant: 'jis' }
     const question = getQuestion(settings, 0)
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -390,7 +390,9 @@ describe('App', () => {
     await startPractice(wrapper)
     expect(wrapper.get('.info-strip').classes()).not.toContain('complete')
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
-    expect(saved.questionIndex).toBe(0)
+    // クリア済みの問題(番号0)は繰り返さず、次の問題(番号1)から始める。
+    expect(saved.questionIndex).toBe(1)
+    expect(saved.session.question).toBe(getQuestion(settings, 1))
     expect(saved.results.completedQuestions).toBe(1)
     wrapper.unmount()
   })

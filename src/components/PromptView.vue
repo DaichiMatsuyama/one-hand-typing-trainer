@@ -8,6 +8,7 @@ const props = defineProps({
   hand: { type: String, required: true },
   layoutVariant: { type: String, default: 'jis' },
   isComplete: { type: Boolean, default: false },
+  startHint: { type: Boolean, default: false },
 })
 
 const nextKey = computed(() => props.question[props.position] ?? '')
@@ -18,7 +19,7 @@ const nextFinger = computed(() => {
 </script>
 
 <template>
-  <section class="prompt-card" :class="{ complete: isComplete }" aria-labelledby="prompt-title">
+  <section class="prompt-card" :class="{ complete: isComplete, 'with-start-hint': startHint }" aria-labelledby="prompt-title">
     <div class="prompt-heading">
       <p id="prompt-title" class="eyebrow">この順番でタップ</p>
       <p v-if="!isComplete" class="finger-hint" :aria-label="`次は${nextFinger}`">
@@ -38,5 +39,6 @@ const nextFinger = computed(() => {
         :aria-current="index === position && !isComplete ? 'step' : undefined"
       >{{ character }}</span>
     </p>
+    <small v-if="startHint" class="start-hint" data-testid="start-hint">最初のキーでスタート</small>
   </section>
 </template>

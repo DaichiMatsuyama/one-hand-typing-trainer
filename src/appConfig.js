@@ -1,4 +1,10 @@
 export const AUTO_ADVANCE_MS = 600
+export const PRACTICE_MODES = Object.freeze(['free', 'timeAttack', 'timeLimit'])
+export const TIME_ATTACK_COUNTS = Object.freeze([10, 20, 30, 50])
+export const TIME_LIMIT_SECONDS = Object.freeze([30, 60, 120, 180])
+export const DEFAULT_PRACTICE_MODE = 'free'
+export const DEFAULT_TARGET_COUNT = 10
+export const DEFAULT_TIME_LIMIT_SEC = 60
 // 練習中の表示時間を実時間へ追従させる間隔
 export const CLOCK_TICK_MS = 200
 // 「やり直す」を長押しして今回の成績をリセットするまでの時間

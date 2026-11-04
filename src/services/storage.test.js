@@ -20,7 +20,10 @@ describe('storage', () => {
   it('設定・結果・途中経過を保存して復元する', () => {
     const storage = memoryStorage()
     const state = {
-      settings: { hand: 'right', level: 3, includeSymbols: true, layoutVariant: 'us' },
+      settings: {
+        hand: 'right', level: 3, includeSymbols: true, layoutVariant: 'us',
+        mode: 'timeAttack', targetCount: 30, timeLimitSec: 120,
+      },
       results: { completedQuestions: 2, correctCount: 10, mistakes: 3, attempts: 13, practiceMs: 9000 },
       questionIndex: 4,
       session: { question: 'jkl', position: 1, mistakes: 1 },
@@ -82,10 +85,27 @@ describe('storage', () => {
     storage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION }))
     expect(loadAppState(storage)).toEqual({
       version: STORAGE_VERSION,
-      settings: { hand: 'left', level: 1, includeSymbols: false, layoutVariant: 'jis' },
+      settings: {
+        hand: 'left', level: 1, includeSymbols: false, layoutVariant: 'jis',
+        mode: 'free', targetCount: 10, timeLimitSec: 60,
+      },
       results: { completedQuestions: 0, correctCount: 0, mistakes: 0, attempts: 0, practiceMs: 0 },
       questionIndex: 0,
       session: null,
+    })
+  })
+
+  it.each([
+    ['不明なモード', { mode: 'unknown' }],
+    ['選択肢にない問題数', { mode: 'timeAttack', targetCount: 12 }],
+    ['選択肢にない制限時間', { mode: 'timeLimit', timeLimitSec: 45 }],
+  ])('%sを既定値へ正規化する', (_label, settings) => {
+    const storage = memoryStorage()
+    storage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, settings }))
+    expect(loadAppState(storage).settings).toMatchObject({
+      mode: settings.mode === 'unknown' ? 'free' : settings.mode,
+      targetCount: 10,
+      timeLimitSec: 60,
     })
   })
 })
