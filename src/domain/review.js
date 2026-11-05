@@ -80,6 +80,10 @@ function isValidRun(value) {
     && (!isInteger(value.timeLimitSec, 1, 3600) || value.targetCount !== null)) return false
   if ((value.endedBy === 'completed' && value.mode !== 'timeAttack')
     || (value.endedBy === 'timeUp' && value.mode !== 'timeLimit')) return false
+  if (value.mode === 'timeAttack' && value.endedBy === 'completed'
+    && value.completedQuestions !== value.targetCount) return false
+  if (value.mode === 'timeLimit' && value.endedBy === 'timeUp'
+    && Math.abs(value.activeMs - value.timeLimitSec * 1000) > 1000) return false
   if (value.kpm !== null) {
     if (value.inputMs < 1000) return false
     const expectedKpm = Math.round(value.correctCount / (value.inputMs / 60_000))
@@ -185,6 +189,10 @@ function newestFirst(runs) {
   return [...sanitizeRuns(runs)].sort((left, right) => Date.parse(right.ts) - Date.parse(left.ts))
 }
 
+function isKpmSeriesRun(run) {
+  return run.endedBy !== 'ended' && run.kpm !== null
+}
+
 /** 「最近の練習」の表示に必要な文言を、直近順に整える。 */
 export function recentRunItems(runs, limit = 8) {
   return newestFirst(runs).slice(0, limit).map((run) => ({
@@ -201,7 +209,7 @@ export function recentRunItems(runs, limit = 8) {
 
 /** 条件を最新runの順に重複なく列挙する。minRunsは系列に採用できる回数で絞る。 */
 export function listRunConditions(runs, { minRuns = 1, limit = Infinity } = {}) {
-  const ordered = newestFirst(runs)
+  const ordered = newestFirst(runs).filter(isKpmSeriesRun)
   const counts = new Map()
   ordered.forEach((run) => counts.set(conditionKey(run), (counts.get(conditionKey(run)) ?? 0) + 1))
   const seen = new Set()
@@ -233,13 +241,12 @@ export function personalBestItems(runs, limit = 8) {
   return result
 }
 
-/** 選択条件のKPMを、直近最大15回・古い順で返す。途中終了とKPMなしは除く。 */
+/** 選択条件のKPMを、直近最大15回・古い順で返す。endedとKPMなしは除く。 */
 export function kpmSeries(runs, condition, limit = 15) {
   if (!condition) return []
   return newestFirst(runs)
     .filter((run) => hasSameConditions(run, condition)
-      && !(run.mode !== 'free' && run.endedBy === 'ended')
-      && run.kpm !== null)
+      && isKpmSeriesRun(run))
     .slice(0, limit)
     .reverse()
     .map((run) => ({ ts: run.ts, label: formatJstDate(Date.parse(run.ts)), value: run.kpm, run }))

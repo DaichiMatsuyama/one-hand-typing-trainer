@@ -298,6 +298,10 @@ function normalizeRunRecord_(record) {
   if (!isIntegerInRange_(record.inputMs, 0, 86400000)) return null;
   if (record.inputMs > record.activeMs + 1000) return null;
   if (!isIntegerInRange_(record.completedQuestions, 0, 100000)) return null;
+  if (record.mode === 'timeAttack' && record.endedBy === 'completed'
+    && record.completedQuestions !== record.targetCount) return null;
+  if (record.mode === 'timeLimit' && record.endedBy === 'timeUp'
+    && Math.abs(record.activeMs - record.timeLimitSec * 1000) > 1000) return null;
   if (!isIntegerInRange_(record.correctCount, 0, 100000)) return null;
   if (!isIntegerInRange_(record.mistakes, 0, 100000)) return null;
   if (!isIntegerInRange_(record.attempts, 1, 100000)

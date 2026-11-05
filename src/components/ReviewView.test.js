@@ -251,6 +251,28 @@ describe('ReviewView(振り返り画面)', () => {
     expect(headings.indexOf('最近の練習')).toBeGreaterThan(headings.indexOf('よくある押し間違い'))
   })
 
+  it('KPMの既定選択は表示タブの先頭で、endedだけが多い条件はタブに出さない', async () => {
+    const withKpmChoices = {
+      ...stats,
+      runs: [
+        run({ ts: '2026-11-03T05:00:00.000Z', hand: 'right' }),
+        run({ ts: '2026-11-03T04:00:00.000Z', level: 3, endedBy: 'ended' }),
+        run({ ts: '2026-11-03T03:00:00.000Z', level: 3, endedBy: 'ended' }),
+        run({ ts: '2026-11-03T02:00:00.000Z' }),
+        run({ ts: '2026-11-03T01:00:00.000Z' }),
+      ],
+    }
+    const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats: withKpmChoices }) }))
+    const tabs = wrapper.findAll('.review-condition-tabs button')
+
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0].text()).toContain('左手・Lv.1')
+    expect(tabs[0].attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('.review-condition-current').text()).toContain('左手・Lv.1')
+    expect(wrapper.findAll('[data-testid="kpm-dot"]')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('タイムアタック10問・左手・Lv.3・記号なし・JIS・HPなし')
+  })
+
   it('候補がなければ自己ベストは「まだありません」、KPMが2回未満なら案内を出し、HPなしならHP成績を隠す', async () => {
     const onlyFree = {
       ...stats,
@@ -274,6 +296,19 @@ describe('ReviewView(振り返り画面)', () => {
     expect(wrapper.get('[data-testid="review-empty"]').text()).toContain('まだ記録がありません')
     expect(wrapper.find('[data-testid="heatmap"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="chart-daily"]').exists()).toBe(false)
+  })
+
+  it('recordsが0件でも未完了runがあれば空案内を出さず、最近の練習と0件のまとめを表示する', async () => {
+    const runsOnly = {
+      ...emptyStats,
+      runs: [run({ endedBy: 'ended', completedQuestions: 1 })],
+    }
+    const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats: runsOnly }) }))
+
+    expect(wrapper.find('[data-testid="review-empty"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="review-recent-runs"]').text()).toContain('途中')
+    expect(wrapper.get('[data-testid="today-count"]').text()).toBe('0問')
+    expect(wrapper.get('[data-testid="today-accuracy"]').text()).toBe('-')
   })
 
   it('通信に失敗したらエラーと「もう一度」を出し、押すと再読み込みする', async () => {

@@ -353,10 +353,17 @@ describe('Code.gs runごとの記録', () => {
 
   it.each([
     ['freeの手動終了', runRecord({ mode: 'free', targetCount: null, endedBy: 'ended' })],
-    ['タイムアタック1問の完了', runRecord({ targetCount: 1 })],
+    ['タイムアタック1問の完了', runRecord({ targetCount: 1, completedQuestions: 1 })],
     ['タイムアタック1000問の途中終了', runRecord({ targetCount: 1000, endedBy: 'ended' })],
     ['制限時間1秒の時間切れ', runRecord({
       mode: 'timeLimit', targetCount: null, timeLimitSec: 1, endedBy: 'timeUp',
+      activeMs: 1000, inputMs: 1000, kpm: 2400,
+    })],
+    ['制限時間30秒の時間切れが-1000msの境界', runRecord({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 30, endedBy: 'timeUp', activeMs: 29_000,
+    })],
+    ['制限時間30秒の時間切れが+1000msの境界', runRecord({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 30, endedBy: 'timeUp', activeMs: 31_000,
     })],
     ['制限時間3600秒の途中終了', runRecord({
       mode: 'timeLimit', targetCount: null, timeLimitSec: 3600, endedBy: 'ended',
@@ -412,7 +419,7 @@ describe('Code.gs runごとの記録', () => {
   it.each([
     ['回数の上限', hpRecord({
       activeMs: 86_400_000, inputMs: 1000, kpm: null, completedQuestions: 100_000,
-      hpSuccessCount: 100_000, hpSkipCount: 0, hpAvgReturnMs: 864, hpMinReturnMs: 1,
+      endedBy: 'ended', hpSuccessCount: 100_000, hpSkipCount: 0, hpAvgReturnMs: 864, hpMinReturnMs: 1,
     })],
     ['時間の上限', hpRecord({
       activeMs: 86_400_000, hpSuccessCount: 1, hpSkipCount: 0,
@@ -601,6 +608,11 @@ describe('Code.gs runごとの記録', () => {
       mode: 'timeLimit', targetCount: null, timeLimitSec: 30, endedBy: 'completed',
     })],
     ['timeAttackのtimeUp', runRecord({ endedBy: 'timeUp' })],
+    ['timeAttack完了時の問題数不足', runRecord({ completedQuestions: 9 })],
+    ['timeAttack完了時の問題数超過', runRecord({ completedQuestions: 11 })],
+    ['timeLimit時間切れ時のactiveMs不一致', runRecord({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 30, endedBy: 'timeUp', activeMs: 28_999,
+    })],
     ['activeMs', runRecord({ activeMs: 86_400_001 })],
     ['inputMsの整数', runRecord({ inputMs: 1.5 })],
     ['inputMsとactiveMsの差', runRecord({ activeMs: 8999 })],

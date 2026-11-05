@@ -139,19 +139,25 @@ export function createRemoteSync({
           { action: 'log', load: loadOutbox, key: OUTBOX_KEY, count: (amount) => { sent += amount } },
           { action: 'log_run', load: loadRunOutbox, key: RUN_OUTBOX_KEY, count: (amount) => { runSent += amount } },
         ]
+        // localStorageへの反映に失敗しても、同じflush内では送信済みIDを再送しない。
+        const sentIds = new Map(drains.map((drain) => [drain.action, new Set()]))
         let stopped = false
         for (;;) {
           let processed = false
           for (const drain of drains) {
             const queue = drain.load(storage)
             if (queue.length === 0) continue
-            const batch = queue.slice(0, SEND_BATCH)
+            const batch = queue
+              .filter((item) => !sentIds.get(drain.action).has(item.id))
+              .slice(0, SEND_BATCH)
+            if (batch.length === 0) continue
             const result = await postBatch(drain.action, batch, access)
             if (result.status === 'rejected') rejected = true
             if (result.status !== 'ok') {
               stopped = true
               break
             }
+            batch.forEach((item) => sentIds.get(drain.action).add(item.id))
             const rejectedIds = drain.action === 'log_run'
               ? new Set(result.rejectedIds.filter((id) => batch.some((item) => item.id === id)))
               : new Set()
@@ -164,10 +170,14 @@ export function createRemoteSync({
             const removableIds = new Set(batch
               .filter((item) => !rejectedIds.has(item.id) || quarantinedIds.has(item.id))
               .map((item) => item.id))
-            saveQueue(drain.key, drain.load(storage).filter((item) => !removableIds.has(item.id)), storage)
+            const queueSaved = saveQueue(
+              drain.key,
+              drain.load(storage).filter((item) => !removableIds.has(item.id)),
+              storage,
+            )
             drain.count(batch.length - rejectedIds.size)
             processed = true
-            if (quarantineFailed) {
+            if (!queueSaved || quarantineFailed) {
               stopped = true
               break
             }
@@ -190,11 +200,21 @@ export function createRemoteSync({
     return flushPromise
   }
 
+  async function sendDirect(action, record) {
+    if (rejected) return false
+    const result = await postBatch(action, [record], getAccess())
+    if (result.status === 'rejected') rejected = true
+    if (result.status !== 'ok') return false
+    return action !== 'log_run' || !result.rejectedIds.includes(record.id)
+  }
+
   async function recordCompletion(record) {
     if (!isEnabled()) return false
     const queue = loadOutbox(storage)
     queue.push(record)
-    saveQueue(OUTBOX_KEY, queue.slice(-MAX_OUTBOX), storage)
+    if (!saveQueue(OUTBOX_KEY, queue.slice(-MAX_OUTBOX), storage)) {
+      return sendDirect('log', record)
+    }
     await flushPending()
     return true
   }
@@ -203,7 +223,9 @@ export function createRemoteSync({
     if (!isEnabled()) return false
     const queue = loadRunOutbox(storage)
     queue.push(record)
-    saveQueue(RUN_OUTBOX_KEY, queue.slice(-MAX_RUN_OUTBOX), storage)
+    if (!saveQueue(RUN_OUTBOX_KEY, queue.slice(-MAX_RUN_OUTBOX), storage)) {
+      return sendDirect('log_run', record)
+    }
     await flushPending()
     return true
   }

@@ -102,6 +102,23 @@ describe('runsの検証と最近の練習', () => {
     expect(sanitizeRuns(undefined)).toEqual([])
   })
 
+  it.each([
+    ['タイムアタック完了時の問題数不足', run({ completedQuestions: 9 })],
+    ['タイムアタック完了時の問題数超過', run({ completedQuestions: 11 })],
+    ['制限時間終了時のactiveMs不一致', run({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 60, endedBy: 'timeUp', activeMs: 58_999,
+    })],
+  ])('%sを不正行として捨てる', (_label, invalid) => {
+    expect(sanitizeRuns([invalid])).toEqual([])
+  })
+
+  it.each([59_000, 60_000, 61_000])('制限時間終了時のactiveMsが許容範囲(%i ms)なら受け入れる', (activeMs) => {
+    const valid = run({
+      mode: 'timeLimit', targetCount: null, timeLimitSec: 60, endedBy: 'timeUp', activeMs,
+    })
+    expect(sanitizeRuns([valid])).toEqual([valid])
+  })
+
   it('直近8回を新しい順にし、日本時間・モード・ランク・HP・途中を整形する', () => {
     const items = recentRunItems([
       run({ ts: '2026-11-02T15:01:00.000Z', kpm: 240 }),
@@ -144,10 +161,21 @@ describe('run条件・自己ベスト・KPM系列', () => {
     )
 
     const fiveConditions = Array.from({ length: 5 }, (_, index) => [
-      run({ ts: `2026-10-${String(index + 1).padStart(2, '0')}T04:00:00Z`, targetCount: index + 1 }),
-      run({ ts: `2026-10-${String(index + 1).padStart(2, '0')}T03:00:00Z`, targetCount: index + 1 }),
+      run({ ts: `2026-10-${String(index + 1).padStart(2, '0')}T04:00:00Z`, targetCount: index + 1, completedQuestions: index + 1 }),
+      run({ ts: `2026-10-${String(index + 1).padStart(2, '0')}T03:00:00Z`, targetCount: index + 1, completedQuestions: index + 1 }),
     ]).flat()
     expect(listRunConditions(fiveConditions, { minRuns: 2, limit: 4 })).toHaveLength(4)
+  })
+
+  it('条件の回数はendedとKPMなしを除いた系列と同じ基準で数える', () => {
+    const eligible = run({ ts: '2026-11-03T04:00:00Z', level: 2 })
+    const conditions = listRunConditions([
+      eligible,
+      run({ ts: '2026-11-03T03:00:00Z', level: 2, endedBy: 'ended' }),
+      run({ ts: '2026-11-03T02:00:00Z', level: 2, kpm: null }),
+    ], { minRuns: 2 })
+    expect(conditions).toEqual([])
+    expect(kpmSeries([eligible], eligible)).toHaveLength(1)
   })
 
   it('条件ごとにランク→KPMで最良を選び、フリー・途中・メニュー使用・KPMなしを除く。同点は新しい回を保つ', () => {
@@ -170,11 +198,12 @@ describe('run条件・自己ベスト・KPM系列', () => {
     expect(personalBestItems([newestTie, sRank])[0]).toMatchObject({ rank: 'S', kpm: 120, run: sRank })
     expect(personalBestItems([run({ kpm: null })])).toEqual([])
     expect(personalBestItems(Array.from({ length: 9 }, (_, index) => run({
-      ts: `2026-10-${String(index + 1).padStart(2, '0')}T03:00:00Z`, targetCount: index + 1,
+      ts: `2026-10-${String(index + 1).padStart(2, '0')}T03:00:00Z`,
+      targetCount: index + 1, completedQuestions: index + 1,
     })))).toHaveLength(8)
   })
 
-  it('KPM系列は同条件だけ・途中終了とnullを除き、直近15回を古い順にする(フリーのendedは完了扱い)', () => {
+  it('KPM系列は同条件だけ・endedとnullを除き、直近15回を古い順にする', () => {
     const target = run()
     const values = Array.from({ length: 17 }, (_, index) => run({
       ts: `2026-11-${String(index + 1).padStart(2, '0')}T03:00:00Z`,
@@ -188,7 +217,7 @@ describe('run条件・自己ベスト・KPM系列', () => {
     expect(series.at(-1).ts).toContain('11-17')
 
     const free = run({ mode: 'free', targetCount: null, endedBy: 'ended' })
-    expect(kpmSeries([free], free)).toHaveLength(1)
+    expect(kpmSeries([free], free)).toEqual([])
     expect(kpmSeries([run({ kpm: null })], target)).toEqual([])
   })
 })

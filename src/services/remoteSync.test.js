@@ -105,6 +105,60 @@ describe('remoteSync', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    ['1問', OUTBOX_KEY, rec('q-save-failed')],
+    ['run', RUN_OUTBOX_KEY, runRec('run-save-failed')],
+  ])('送信成功後に%sキューの保存が失敗しても同じバッチを再送せずflushを終える', async (_label, key, record) => {
+    const base = memoryStorage()
+    base.setItem(key, JSON.stringify([record]))
+    const storage = {
+      getItem: base.getItem,
+      setItem: (targetKey, value) => {
+        if (targetKey === key) throw new Error('quota exceeded')
+        base.setItem(targetKey, value)
+      },
+    }
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(ok())
+      .mockRejectedValue(new Error('same batch was sent again'))
+    const { sync } = setup({ storage, fetchImpl })
+
+    await sync.flushPending()
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).records).toEqual([record])
+  })
+
+  it.each([
+    ['1問', 'recordCompletion', 'log', rec('q-direct')],
+    ['run', 'recordRun', 'log_run', runRec('run-direct')],
+  ])('%sの新規記録を保存できないときは、その場で1回だけ直接送信する', async (_label, method, action, record) => {
+    const storage = {
+      getItem: () => null,
+      setItem: () => { throw new Error('storage unavailable') },
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(ok())
+    const { sync } = setup({ storage, fetchImpl })
+
+    expect(await sync[method](record)).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      action, code: 'code-1', deviceId: 'dev-1', records: [record],
+    })
+  })
+
+  it('新規記録を保存できず直接送信にも失敗した場合はfalseを返し、再送しない', async () => {
+    const storage = {
+      getItem: () => null,
+      setItem: () => { throw new Error('storage unavailable') },
+    }
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('offline'))
+    const { sync } = setup({ storage, fetchImpl })
+
+    expect(await sync.recordCompletion(rec('q-direct-failed'))).toBe(false)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('2つのキューを1バッチずつ交互に送る', async () => {
     const { sync, fetchImpl, storage } = setup()
     const completions = Array.from({ length: SEND_BATCH + 1 }, (_, index) => rec(`q-${index}`))

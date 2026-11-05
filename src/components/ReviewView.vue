@@ -322,7 +322,8 @@ async function backToSelf() {
 }
 
 // ---- 表示用の集計 ---------------------------------------------------------
-const hasRecords = computed(() => (stats.value?.totals?.records ?? 0) > 0)
+const runs = computed(() => sanitizeRuns(stats.value?.runs))
+const hasRecords = computed(() => (stats.value?.totals?.records ?? 0) > 0 || runs.value.length > 0)
 const today = computed(() => stats.value?.today ?? { records: 0, practiceMs: 0, attempts: 0, mistakes: 0 })
 const todayAccuracy = computed(() => accuracyPercent(today.value.attempts, today.value.mistakes))
 const totals = computed(() => stats.value?.totals ?? { records: 0, practiceMs: 0, days: 0 })
@@ -347,14 +348,12 @@ const bars = computed(() => dailyBars(stats.value?.daily))
 const dailySummary = computed(() => summarizeDaily(stats.value?.daily))
 const points = computed(() => accuracyPoints(stats.value?.daily))
 const confusions = computed(() => (stats.value?.confusions ?? []).slice(0, MAX_CONFUSIONS_SHOWN))
-const runs = computed(() => sanitizeRuns(stats.value?.runs))
 const recentRuns = computed(() => recentRunItems(runs.value, 8))
 const bestRuns = computed(() => personalBestItems(runs.value, 8))
-const allRunConditions = computed(() => listRunConditions(runs.value))
 const kpmConditions = computed(() => listRunConditions(runs.value, { minRuns: 2, limit: 4 }))
 const selectedKpmCondition = computed(() => (
-  allRunConditions.value.find((condition) => condition.key === selectedKpmConditionKey.value)
-    ?? allRunConditions.value[0]
+  kpmConditions.value.find((condition) => condition.key === selectedKpmConditionKey.value)
+    ?? kpmConditions.value[0]
     ?? null
 ))
 const selectedKpmSeries = computed(() => kpmSeries(runs.value, selectedKpmCondition.value?.run, 15))
