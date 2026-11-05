@@ -115,11 +115,22 @@ onBeforeUnmount(() => props.engine.detach())
       :layout="layout"
       :next-key="nextKey"
       :feedback="session.feedback"
-      :clear-effect="clearEffect"
-      :feedback-effects="settings.feedbackEffects"
       :disabled="session.isComplete || session.preserved || menuOpen"
       @press="pressKey"
     />
+
+    <div
+      v-if="settings.feedbackEffects && clearEffect"
+      :key="clearEffect.id"
+      class="keyboard-clear-effect"
+      :class="`is-${clearEffect.kind}`"
+      data-testid="keyboard-clear-effect"
+      aria-hidden="true"
+    >
+      <span class="keyboard-clear-effect-circle">
+        {{ clearEffect.kind === 'thumbsUp' ? '👍' : '◯' }}
+      </span>
+    </div>
 
     <PracticeMenu
       v-if="menuOpen"

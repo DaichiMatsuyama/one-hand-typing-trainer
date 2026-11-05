@@ -70,6 +70,40 @@ describe('ResultScreen', () => {
     expect(wrapper.get('.number-unit').text()).toBe('+264 KPM')
   })
 
+  it('応援メッセージと成長文の末尾を分離せず、textContentを変えない', () => {
+    const value = summary()
+    value.analysis.message = { id: 'speed-1', text: '入力速度が前回より伸びました！' }
+    value.analysis.growth = {
+      improvements: [
+        { type: 'kpm', text: '入力速度が前回より+12 KPM！' },
+        { type: 'mistakes', text: 'ミスが2回減りました。' },
+      ],
+    }
+    const wrapper = mount(ResultScreen, { props: { summary: value } })
+    const message = wrapper.get('[data-testid="result-message"]')
+    const growthRows = wrapper.findAll('.result-growth-list li')
+
+    expect(message.element.textContent).toBe(value.analysis.message.text)
+    expect(message.get('.kinsoku-tail').text()).toBe('した！')
+    expect(growthRows.map((row) => row.element.textContent))
+      .toEqual(value.analysis.growth.improvements.map((item) => item.text))
+    expect(growthRows[0].get('.kinsoku-tail').text()).toContain('！')
+    expect(growthRows[1].get('.kinsoku-tail').text()).toBe('した。')
+  })
+
+  it('結果の補足文も末尾を分離せずtextContentを保つ', () => {
+    const value = summary({ mode: 'timeLimit', endedBy: 'ended', targetCount: null, timeLimitSec: 60 })
+    value.analysis.rank = null
+    value.analysis.personalBest = null
+    const wrapper = mount(ResultScreen, { props: { summary: value } })
+
+    expect(wrapper.get('[data-testid="result-ended-guide"]').element.textContent)
+      .toBe('最後まで続けるとランクが付きます')
+    expect(wrapper.get('[data-testid="result-best-exclusion"]').element.textContent)
+      .toBe('途中終了の回は自己ベストの対象外です')
+    expect(wrapper.findAll('.kinsoku-tail').length).toBeGreaterThanOrEqual(3)
+  })
+
   it('フリーではランクと自己ベストを出さず、苦手キーとメッセージは表示する', () => {
     const value = summary({ mode: 'free', endedBy: 'ended', targetCount: null })
     value.analysis.rank = null

@@ -322,7 +322,13 @@ describe('App', () => {
     expect(wrapper.get('.info-strip').classes()).toContain('complete')
     expect(wrapper.get('.prompt-text').text()).toContain('✓')
     expect(wrapper.get('.keyboard-panel').classes()).toContain('complete')
-    expect(wrapper.get('[data-testid="keyboard-clear-effect"]').text()).toBe('👍')
+    const clearEffect = wrapper.get('[data-testid="keyboard-clear-effect"]')
+    expect(clearEffect.text()).toBe('👍')
+    expect(clearEffect.attributes('aria-hidden')).toBe('true')
+    expect(clearEffect.classes()).toContain('is-thumbsUp')
+    expect(clearEffect.find('.keyboard-clear-effect-circle').exists()).toBe(true)
+    expect(wrapper.get('.practice-layout').element.contains(clearEffect.element)).toBe(true)
+    expect(wrapper.get('[data-testid="keyboard"]').element.contains(clearEffect.element)).toBe(false)
     expect(wrapper.get('.feedback').text()).toBe('クリア！ 自動で次の問題に進みます')
     expect(wrapper.find('[data-testid="next-question"]').exists()).toBe(false)
     expect(wrapper.findAll('.key').every((key) => key.attributes('aria-disabled') === 'true')).toBe(true)
@@ -345,6 +351,37 @@ describe('App', () => {
     expect(wrapper.get('.prompt-text').text()).not.toBe(firstQuestion)
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).questionIndex).toBe(1)
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).results.completedQuestions).toBe(1)
+    wrapper.unmount()
+  })
+
+  it('feedbackEffects=falseならクリア演出を表示しない', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
+      settings: { feedbackEffects: false },
+      results: {},
+      questionIndex: 0,
+      session: null,
+    }))
+    const wrapper = mount(App)
+    await startPractice(wrapper)
+    await completeCurrentQuestion(wrapper)
+
+    expect(wrapper.find('[data-testid="keyboard-clear-effect"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('ミスありの問題は画面中央オーバーレイに丸印を表示する', async () => {
+    const wrapper = mount(App)
+    await startPractice(wrapper)
+    const expected = wrapper.get('.prompt-text .current').text()
+    const wrongKey = expected === 'a' ? 's' : 'a'
+    await wrapper.get(`[data-key="${wrongKey}"]`).trigger('click')
+    await completeCurrentQuestion(wrapper)
+
+    const clearEffect = wrapper.get('[data-testid="keyboard-clear-effect"]')
+    expect(clearEffect.text()).toBe('◯')
+    expect(clearEffect.classes()).toContain('is-circle')
+    expect(clearEffect.find('.keyboard-clear-effect-circle').exists()).toBe(true)
     wrapper.unmount()
   })
 

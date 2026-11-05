@@ -135,8 +135,9 @@ describe('実機向けレイアウト', () => {
   })
 
   it('クリア演出はキー入力を妨げず、動きを減らす設定ではアニメーションしない', () => {
-    expect(styles).toMatch(/\.keyboard-clear-effect\s*\{[\s\S]*?pointer-events:\s*none/)
-    expect(styles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.keyboard-clear-effect\s*\{[\s\S]*?animation:\s*none !important/)
+    expect(styles).toMatch(/\.keyboard-clear-effect\s*\{[\s\S]*?position:\s*fixed[\s\S]*?inset:\s*0[\s\S]*?place-items:\s*center[\s\S]*?pointer-events:\s*none/)
+    expect(styles).toMatch(/\.keyboard-clear-effect-circle\s*\{[\s\S]*?width:\s*min\(38vh, 150px\)/)
+    expect(styles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.keyboard-clear-effect-circle\s*\{[\s\S]*?animation:\s*none !important/)
   })
 
   const landscapeCases = [

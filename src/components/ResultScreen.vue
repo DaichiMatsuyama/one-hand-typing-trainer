@@ -92,17 +92,47 @@ const timeText = computed(() => (
       : formatDuration(props.summary.activeMs)
 ))
 
-function growthTextParts(text) {
-  const match = text.match(/([+-]?\d+(?:\.\d+)?(?:\s*KPM|%|回))/u)
-  if (!match) return [{ text, nowrap: false }]
+function protectedTextParts(text, { protectNumberUnit = false } = {}) {
+  const characters = [...text]
+  const tail = characters.slice(-3).join('')
+  const ranges = [{ start: text.length - tail.length, end: text.length, tail: true }]
 
-  const start = match.index
-  const end = start + match[0].length
-  return [
-    { text: text.slice(0, start), nowrap: false },
-    { text: match[0], nowrap: true },
-    { text: text.slice(end), nowrap: false },
-  ].filter((part) => part.text)
+  if (protectNumberUnit) {
+    const match = text.match(/([+-]?\d+(?:\.\d+)?(?:\s*KPM|%|回))/u)
+    if (match) ranges.push({ start: match.index, end: match.index + match[0].length, number: true })
+  }
+
+  ranges.sort((left, right) => left.start - right.start)
+  const mergedRanges = []
+  for (const range of ranges) {
+    const previous = mergedRanges.at(-1)
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end)
+      previous.tail ||= range.tail
+      previous.number ||= range.number
+    } else {
+      mergedRanges.push({ ...range })
+    }
+  }
+
+  const parts = []
+  let cursor = 0
+  for (const range of mergedRanges) {
+    if (range.start > cursor) parts.push({ text: text.slice(cursor, range.start) })
+    parts.push({
+      text: text.slice(range.start, range.end),
+      nowrap: true,
+      tail: Boolean(range.tail),
+      number: Boolean(range.number),
+    })
+    cursor = range.end
+  }
+  if (cursor < text.length) parts.push({ text: text.slice(cursor) })
+  return parts
+}
+
+function growthTextParts(text) {
+  return protectedTextParts(text, { protectNumberUnit: true })
 }
 </script>
 
@@ -119,7 +149,11 @@ function growthTextParts(text) {
             <div class="run-result-overview">
               <p v-if="endedEarly" class="ended-early" data-testid="result-ended-early">途中終了</p>
               <p v-if="endedEarly" class="ended-guide" data-testid="result-ended-guide">
-                最後まで続けるとランクが付きます
+                <span
+                  v-for="(part, index) in protectedTextParts('最後まで続けるとランクが付きます')"
+                  :key="index"
+                  :class="{ 'kinsoku-tail': part.tail }"
+                >{{ part.text }}</span>
               </p>
 
               <section v-if="showRank" class="rank-summary" aria-labelledby="rank-heading">
@@ -128,7 +162,11 @@ function growthTextParts(text) {
                   <strong data-testid="result-rank">{{ analysis.rank }}</strong>
                 </div>
                 <div class="rank-details">
-                  <p v-if="bestLabel" class="personal-best" data-testid="result-personal-best">{{ bestLabel }}</p>
+                  <p v-if="bestLabel" class="personal-best" data-testid="result-personal-best"><span
+                    v-for="(part, index) in protectedTextParts(bestLabel)"
+                    :key="index"
+                    :class="{ 'kinsoku-tail': part.tail }"
+                  >{{ part.text }}</span></p>
                   <p
                     class="next-rank"
                     data-testid="result-next-rank"
@@ -141,9 +179,17 @@ function growthTextParts(text) {
                 </div>
               </section>
               <p v-if="showRankUnavailable" class="rank-unavailable" data-testid="result-rank-unavailable">
-                入力が少なく、ランクを判定できませんでした
+                <span
+                  v-for="(part, index) in protectedTextParts('入力が少なく、ランクを判定できませんでした')"
+                  :key="index"
+                  :class="{ 'kinsoku-tail': part.tail }"
+                >{{ part.text }}</span>
               </p>
-              <p v-if="bestExclusion" class="best-exclusion" data-testid="result-best-exclusion">{{ bestExclusion }}</p>
+              <p v-if="bestExclusion" class="best-exclusion" data-testid="result-best-exclusion"><span
+                v-for="(part, index) in protectedTextParts(bestExclusion)"
+                :key="index"
+                :class="{ 'kinsoku-tail': part.tail }"
+              >{{ part.text }}</span></p>
 
               <p
                 v-if="analysis.message"
@@ -151,7 +197,11 @@ function growthTextParts(text) {
                 role="status"
                 aria-live="polite"
                 data-testid="result-message"
-              >{{ analysis.message.text }}</p>
+              ><span
+                v-for="(part, index) in protectedTextParts(analysis.message.text)"
+                :key="index"
+                :class="{ 'kinsoku-tail': part.tail }"
+              >{{ part.text }}</span></p>
             </div>
 
             <div class="run-result-details">
@@ -187,7 +237,7 @@ function growthTextParts(text) {
                       <span
                         v-for="(part, index) in growthTextParts(item.text)"
                         :key="`${item.type}-${index}`"
-                        :class="{ 'number-unit': part.nowrap }"
+                        :class="{ 'number-unit': part.number, 'kinsoku-tail': part.tail }"
                       >{{ part.text }}</span>
                     </li>
                   </ul>
