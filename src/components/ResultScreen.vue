@@ -56,6 +56,13 @@ const showRankUnavailable = computed(() => (
     && props.summary.endedBy !== 'ended'
     && analysis.value.rank === null
 ))
+const contentDensity = computed(() => {
+  const hasGrowth = Boolean(analysis.value.growth?.improvements?.length)
+  const hasWeakKeys = Boolean(analysis.value.weakKeys?.length)
+  if (hasGrowth && hasWeakKeys) return 'full'
+  if (hasGrowth || hasWeakKeys) return 'medium'
+  return 'sparse'
+})
 const bestLabel = computed(() => {
   if (!showRank.value || !analysis.value.personalBest?.eligible) return ''
   if (analysis.value.personalBest.isFirst) return '⭐ 初めての記録'
@@ -145,7 +152,11 @@ function growthTextParts(text) {
         :class="{ 'has-overflow': hasOverflow, 'at-scroll-end': atScrollEnd }"
       >
         <div ref="scrollArea" class="run-result-content" data-testid="result-scroll-area" @scroll="updateScrollState">
-          <div ref="scrollContent" class="run-result-body">
+          <div
+            ref="scrollContent"
+            class="run-result-body"
+            :class="`is-${contentDensity}-content`"
+          >
             <div class="run-result-overview">
               <p v-if="endedEarly" class="ended-early" data-testid="result-ended-early">途中終了</p>
               <p v-if="endedEarly" class="ended-guide" data-testid="result-ended-guide">

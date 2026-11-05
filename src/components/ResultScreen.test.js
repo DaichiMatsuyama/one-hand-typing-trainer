@@ -27,6 +27,7 @@ function summary(overrides = {}) {
 describe('ResultScreen', () => {
   it('競技モードでランク・自己ベスト・次ランク・成長・苦手キー・メッセージを表示する', () => {
     const wrapper = mount(ResultScreen, { props: { summary: summary() } })
+    expect(wrapper.get('.run-result-body').classes()).toContain('is-full-content')
     expect(wrapper.get('[data-testid="result-rank"]').text()).toBe('A')
     expect(wrapper.get('[data-testid="result-personal-best"]').text()).toBe('⭐ 自己ベスト更新')
     expect(wrapper.get('[data-testid="result-next-rank"]').text()).toContain('KPMあと20')
@@ -43,6 +44,40 @@ describe('ResultScreen', () => {
     expect(wrapper.get('.run-result-details').element.contains(wrapper.get('.run-result-grid').element)).toBe(true)
     expect(wrapper.get('.run-result-insights').element.contains(wrapper.get('[data-testid="result-growth"]').element)).toBe(true)
     expect(wrapper.get('.run-result-actions').element.contains(wrapper.get('[data-testid="result-scroll-area"]').element)).toBe(false)
+  })
+
+  it('成長と苦手キーの有無に応じて本文の密度クラスを切り替える', async () => {
+    const wrapper = mount(ResultScreen, { props: { summary: summary() } })
+    const body = () => wrapper.get('.run-result-body')
+
+    expect(body().classes()).toContain('is-full-content')
+
+    const medium = summary()
+    medium.analysis = {
+      ...medium.analysis,
+      growth: { improvements: [] },
+    }
+    await wrapper.setProps({ summary: medium })
+    expect(body().classes()).toContain('is-medium-content')
+    expect(body().classes()).not.toContain('is-full-content')
+
+    const otherMedium = summary()
+    otherMedium.analysis = {
+      ...otherMedium.analysis,
+      weakKeys: [],
+    }
+    await wrapper.setProps({ summary: otherMedium })
+    expect(body().classes()).toContain('is-medium-content')
+
+    const sparse = summary()
+    sparse.analysis = {
+      ...sparse.analysis,
+      growth: { improvements: [] },
+      weakKeys: [],
+    }
+    await wrapper.setProps({ summary: sparse })
+    expect(body().classes()).toContain('is-sparse-content')
+    expect(body().classes()).not.toContain('is-medium-content')
   })
 
   it('初回ベストは星付きで「初めての記録」と表示する', () => {

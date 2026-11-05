@@ -682,11 +682,42 @@ h1 {
 }
 
 .run-result-body {
+  --result-column-gap: 8px;
+  --result-rank-size: clamp(3.5rem, 16dvh, 4.25rem);
+  --result-item-label-size: 0.8125rem;
+  --result-value-size: clamp(1.25rem, 5.2dvh, 1.45rem);
+  --result-primary-value-size: clamp(1.5rem, 6.4dvh, 1.75rem);
+  --result-grid-gap: 4px;
+  --result-grid-padding-block: 6px;
+  --result-grid-margin-block-end: 5px;
   display: grid;
   grid-template-columns: minmax(190px, 0.78fr) minmax(0, 1.55fr);
+  align-content: center;
   align-items: start;
-  gap: 8px;
+  gap: var(--result-column-gap);
   min-height: 100%;
+}
+
+.run-result-body.is-medium-content {
+  --result-column-gap: 12px;
+  --result-rank-size: clamp(3.75rem, 17dvh, 4.5rem);
+  --result-item-label-size: 0.84375rem;
+  --result-value-size: clamp(1.3125rem, 5.4dvh, 1.525rem);
+  --result-primary-value-size: clamp(1.5625rem, 6.6dvh, 1.8125rem);
+  --result-grid-gap: 5px;
+  --result-grid-padding-block: 7px;
+  --result-grid-margin-block-end: 7px;
+}
+
+.run-result-body.is-sparse-content {
+  --result-column-gap: 16px;
+  --result-rank-size: clamp(4rem, 18dvh, 4.75rem);
+  --result-item-label-size: 0.9375rem;
+  --result-value-size: clamp(1.5rem, 6dvh, 1.75rem);
+  --result-primary-value-size: clamp(1.75rem, 7.2dvh, 2rem);
+  --result-grid-gap: 6px;
+  --result-grid-padding-block: 10px;
+  --result-grid-margin-block-end: 10px;
 }
 
 .run-result-overview,
@@ -736,13 +767,13 @@ h1 {
 .result-insight h2 {
   margin: 0;
   color: var(--muted);
-  font-size: 0.8125rem;
+  font-size: var(--result-item-label-size);
 }
 
 .rank-mark strong {
   display: block;
   color: var(--accent-dark);
-  font-size: clamp(3.5rem, 16dvh, 4.25rem);
+  font-size: var(--result-rank-size);
   line-height: 0.9;
 }
 
@@ -811,27 +842,27 @@ h1 {
 .run-result-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-  margin: 0 0 5px;
+  gap: var(--result-grid-gap);
+  margin: 0 0 var(--result-grid-margin-block-end);
 }
 
 .run-result-grid div {
   min-width: 0;
-  padding: 6px 3px;
+  padding: var(--result-grid-padding-block) 3px;
   border-radius: 9px;
   background: #eef4f0;
 }
 
 .run-result-grid dt {
   color: var(--muted);
-  font-size: 0.8125rem;
+  font-size: var(--result-item-label-size);
   font-weight: 750;
   line-height: 1.15;
 }
 
 .run-result-grid dd {
   margin: 2px 0 0;
-  font-size: clamp(1.25rem, 5.2dvh, 1.45rem);
+  font-size: var(--result-value-size);
   font-weight: 850;
   line-height: 1.1;
 }
@@ -854,7 +885,7 @@ h1 {
 
 .run-result-grid div.primary dd {
   color: var(--accent-dark);
-  font-size: clamp(1.5rem, 6.4dvh, 1.75rem);
+  font-size: var(--result-primary-value-size);
 }
 
 .run-result-insights {
