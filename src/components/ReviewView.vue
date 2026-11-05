@@ -44,6 +44,9 @@ const root = ref(null)
 const ADMIN_KEY = 'one-hand-typing-trainer:admin:v1'
 const REVIEW_CACHE_KEY = 'one-hand-typing-trainer:review-cache:v1'
 const MAX_CONFUSIONS_SHOWN = 5
+const DEVICE_TAP_MAX_MOVEMENT_PX = 10
+const DEVICE_CLICK_SUPPRESSION_MS = 800
+const SCROLL_TOP_EPSILON_PX = 4
 
 const state = ref('idle') // idle | loading | ready | error
 const errorReason = ref('')
@@ -241,18 +244,33 @@ const errorText = computed(() => ERROR_TEXT[errorReason.value] ?? ERROR_TEXT.ser
 
 // 管理者表示の入口: 見出しの長押し(画面には何も表示しない)
 let adminPressTimer
+let adminPressPointerId
+
+function clearAdminPress() {
+  clearTimeout(adminPressTimer)
+  adminPressTimer = undefined
+  adminPressPointerId = undefined
+}
 
 function startAdminPress(event) {
   if (event.button !== undefined && event.button !== 0) return
-  clearTimeout(adminPressTimer)
+  clearAdminPress()
+  adminPressPointerId = event.pointerId
   adminPressTimer = setTimeout(() => {
-    openAdmin()
+    adminPressTimer = undefined
+    adminPressPointerId = undefined
+    document.activeElement?.blur?.()
+    window.getSelection?.()?.removeAllRanges()
+    void openAdmin()
     scrollToTop()
   }, props.adminPressMs)
 }
 
-function cancelAdminPress() {
-  clearTimeout(adminPressTimer)
+function cancelAdminPress(event) {
+  if (adminPressPointerId !== undefined
+    && event?.pointerId !== undefined
+    && event.pointerId !== adminPressPointerId) return
+  clearAdminPress()
 }
 
 function closeAdmin() {
@@ -304,6 +322,7 @@ function deviceDetail(device) {
 
 // 端末の一覧は画面の一番下にあるので、切り替えたら先頭に戻して成績をすぐ見られるようにする
 function scrollToTop() {
+  if (!root.value || root.value.scrollTop <= SCROLL_TOP_EPSILON_PX) return
   root.value?.scrollTo?.({ top: 0, behavior: 'smooth' })
 }
 
@@ -319,6 +338,80 @@ async function backToSelf() {
   viewing.value = null
   scrollToTop()
   await load()
+}
+
+// iOSの合成clickに頼らず、同じボタン上の短いpointer操作が完了した時点で切り替える。
+// 直後の合成clickだけを押下印で消費し、単独のclickはキーボード・VoiceOver用に残す。
+const devicePointers = new Map()
+const deviceClickSuppressions = new Map()
+
+function removeDeviceClickSuppression(mark) {
+  clearTimeout(mark.timer)
+  const marks = deviceClickSuppressions.get(mark.element)
+  if (!marks) return
+  const index = marks.indexOf(mark)
+  if (index !== -1) marks.splice(index, 1)
+  if (marks.length === 0) deviceClickSuppressions.delete(mark.element)
+}
+
+function addDeviceClickSuppression(element) {
+  const mark = { element, finishedAt: Date.now(), timer: undefined }
+  const marks = deviceClickSuppressions.get(element) ?? []
+  marks.push(mark)
+  deviceClickSuppressions.set(element, marks)
+  mark.timer = setTimeout(() => removeDeviceClickSuppression(mark), DEVICE_CLICK_SUPPRESSION_MS)
+}
+
+function clearDevicePointerState() {
+  devicePointers.clear()
+  for (const marks of deviceClickSuppressions.values()) {
+    for (const mark of [...marks]) removeDeviceClickSuppression(mark)
+  }
+  deviceClickSuppressions.clear()
+}
+
+function handleDevicePointerDown(event, device) {
+  if (event.button !== undefined && event.button !== 0) return
+  devicePointers.delete(event.pointerId)
+  devicePointers.set(event.pointerId, {
+    element: event.currentTarget,
+    startX: event.clientX,
+    startY: event.clientY,
+    device,
+  })
+}
+
+function handleDevicePointerUp(event) {
+  const mark = devicePointers.get(event.pointerId)
+  if (!mark) return
+  devicePointers.delete(event.pointerId)
+  if (mark.element !== event.currentTarget) return
+  if (Math.hypot(event.clientX - mark.startX, event.clientY - mark.startY) > DEVICE_TAP_MAX_MOVEMENT_PX) return
+  addDeviceClickSuppression(mark.element)
+  void viewDevice(mark.device)
+}
+
+function handleDevicePointerCancel(event) {
+  devicePointers.delete(event.pointerId)
+}
+
+function handleDeviceClick(event, device) {
+  const marks = deviceClickSuppressions.get(event.currentTarget)
+  const now = Date.now()
+  const mark = marks?.find((candidate) => {
+    const elapsed = now - candidate.finishedAt
+    return elapsed >= 0 && elapsed <= DEVICE_CLICK_SUPPRESSION_MS
+  })
+  if (mark) {
+    removeDeviceClickSuppression(mark)
+    return
+  }
+  void viewDevice(device)
+}
+
+function clearReviewPointerState() {
+  clearAdminPress()
+  clearDevicePointerState()
 }
 
 // ---- 表示用の集計 ---------------------------------------------------------
@@ -509,15 +602,19 @@ function onVisibilityChange() {
 onMounted(() => {
   portraitQuery?.addEventListener?.('change', onOrientationChange)
   document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('pagehide', clearReviewPointerState)
+  window.addEventListener('blur', clearReviewPointerState)
   onOrientationChange()
 })
 
 onBeforeUnmount(() => {
   invalidateLoad()
-  clearTimeout(adminPressTimer)
+  clearReviewPointerState()
   stopAutoRefresh()
   portraitQuery?.removeEventListener?.('change', onOrientationChange)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('pagehide', clearReviewPointerState)
+  window.removeEventListener('blur', clearReviewPointerState)
 })
 
 defineExpose({ load })
@@ -566,7 +663,15 @@ defineExpose({ load })
         <ul v-if="devices" class="device-list" data-testid="device-list">
           <li v-if="devices.length === 0">記録のある端末は、まだありません。</li>
           <li v-for="device in devices" :key="device.deviceId">
-            <button type="button" class="device-button" :data-device="device.deviceId" @click="viewDevice(device)">
+            <button
+              type="button"
+              class="device-button"
+              :data-device="device.deviceId"
+              @pointerdown="handleDevicePointerDown($event, device)"
+              @pointerup="handleDevicePointerUp"
+              @pointercancel="handleDevicePointerCancel"
+              @click="handleDeviceClick($event, device)"
+            >
               <strong>{{ deviceLabel(device) }}</strong>
               <span>{{ deviceDetail(device) }}</span>
             </button>
@@ -628,7 +733,7 @@ defineExpose({ load })
             >{{ option === 'left' ? '左手' : '右手' }}</button>
           </div>
 
-          <div class="heatmap" data-testid="heatmap">
+          <div class="heatmap" :data-hand="heatHand" data-testid="heatmap">
             <div
               v-for="row in heatLayout.rows"
               :key="row.id"

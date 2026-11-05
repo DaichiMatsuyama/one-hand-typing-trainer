@@ -7,7 +7,7 @@ import {
   calculateLandscapeLayout,
   estimatePromptWidth,
 } from './layoutMetrics.js'
-import { getLayoutPitchCount } from './data/keyboardLayouts.js'
+import { getKeyboardLayout, getLayoutPitchCount } from './data/keyboardLayouts.js'
 
 const styles = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
 const indexHtml = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8')
@@ -156,6 +156,27 @@ describe('実機向けレイアウト', () => {
     expect(styles).toMatch(/\.key\.home-target\s*\{[\s\S]*?animation:\s*home-target-pulse/)
     expect(styles).toMatch(/\.key\.home-target\.home-confirmed\s*\{[\s\S]*?animation:\s*none/)
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.key\.home-target\s*\{[\s\S]*?animation:\s*none !important/)
+  })
+
+  it.each([360, 393, 430])('幅%dpxで右手ヒートマップの全段がカード内に収まる', (viewportWidth) => {
+    const heatRule = styles.match(/\.heatmap\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    const numberVariable = (name) => Number(heatRule.match(new RegExp(`--${name}:\\s*([0-9.]+)`))?.[1])
+    const reserve = numberVariable('heat-card-inline-reserve')
+    const pitchCount = numberVariable('heat-right-pitch-count')
+    const gapCount = numberVariable('heat-right-gap-count')
+    const gapWidth = numberVariable('heat-right-gap-width')
+    const keyMax = numberVariable('heat-key-max')
+    const gap = numberVariable('hg')
+    const innerWidth = viewportWidth - reserve
+    const keyWidth = Math.min(keyMax, (innerWidth - gapWidth) / pitchCount)
+
+    expect(gapWidth).toBe(gapCount * gap)
+    expect(styles).toMatch(/\.heatmap\[data-hand="right"\]\s*\{[\s\S]*?--hk:\s*min\(var\(--heat-key-max\),\s*calc\(\(100vw - var\(--heat-card-inline-reserve\) - var\(--heat-right-gap-width\)\) \/ var\(--heat-right-pitch-count\)\)\)/)
+    for (const row of getKeyboardLayout('right', 'jis').rows) {
+      const rowWidth = (row.keys.length + row.offset) * keyWidth
+        + (row.keys.length - 1 + row.offset) * gap
+      expect(rowWidth).toBeLessThanOrEqual(innerWidth)
+    }
   })
 
   it.each([

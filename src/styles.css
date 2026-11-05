@@ -1906,11 +1906,22 @@ h1 {
 
 /* キーのヒートマップ */
 .heatmap {
-  --hk: min(54px, calc((100vw - 64px) / 6.75));
+  --heat-card-inline-reserve: 64px;
+  --heat-right-pitch-count: 6.75;
+  --heat-right-gap-count: 5.75;
+  --heat-right-gap-width: 34.5px;
+  --heat-key-max: 54px;
+  --hk: min(var(--heat-key-max), calc((100vw - var(--heat-card-inline-reserve)) / var(--heat-right-pitch-count)));
   --hg: 6px;
   display: grid;
   gap: var(--hg);
   margin-bottom: 8px;
+}
+
+/* 右手の最長段は offset込み6.75ピッチ + 5.75隙間。
+   360〜430pxでも 6.75 * --hk + 5.75 * 6px <= 100vw - 64px にする。 */
+.heatmap[data-hand="right"] {
+  --hk: min(var(--heat-key-max), calc((100vw - var(--heat-card-inline-reserve) - var(--heat-right-gap-width)) / var(--heat-right-pitch-count)));
 }
 
 .heat-row {
@@ -2216,6 +2227,8 @@ h1 {
 .review-admin {
   margin: 0 0 14px;
   text-align: center;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .admin-panel {
@@ -2223,6 +2236,8 @@ h1 {
   border: 1px dashed #8a8f98;
   border-radius: 14px;
   text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .admin-panel h3 {
@@ -2274,6 +2289,8 @@ h1 {
   color: var(--ink);
   border-color: #aaa296;
   text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .device-button span {

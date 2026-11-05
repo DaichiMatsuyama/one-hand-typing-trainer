@@ -135,6 +135,7 @@ describe('ReviewView(振り返り画面)', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
     delete window.matchMedia
   })
@@ -629,6 +630,21 @@ describe('ReviewView(振り返り画面)', () => {
       expect(wrapper.find('[data-testid="admin-panel"]').exists()).toBe(false)
     })
 
+    it('長押しが成立した時点でフォーカスとテキスト選択を解除する', async () => {
+      const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }))
+      const input = document.createElement('input')
+      document.body.append(input)
+      input.focus()
+      const blur = vi.spyOn(input, 'blur')
+      const removeAllRanges = vi.spyOn(window.getSelection(), 'removeAllRanges')
+
+      await openAdminPanel(wrapper)
+
+      expect(blur).toHaveBeenCalledTimes(1)
+      expect(removeAllRanges).toHaveBeenCalledTimes(1)
+      input.remove()
+    })
+
     it('アンマウント後に長押しのタイマーが残らない', async () => {
       const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }), { adminPressMs: 30 })
       await wrapper.get('[data-testid="review-title"]').trigger('pointerdown')
@@ -690,6 +706,55 @@ describe('ReviewView(振り返り画面)', () => {
       await flushPromises()
       expect(wrapper.find('[data-testid="review-viewing"]').exists()).toBe(false)
       expect(JSON.parse(fetchImpl.mock.calls.at(-1)[1].body).action).toBe('stats')
+    })
+
+    it('pointerdown→pointerupで即座に1回だけ読み込み、続く合成clickを無視する', async () => {
+      localStorage.setItem(ADMIN_KEY, 'adm-ok')
+      const fetchImpl = api()
+      const wrapper = await mountReview(fetchImpl)
+      await openAdminPanel(wrapper)
+      await flushPromises()
+      const button = wrapper.findAll('.device-button')[0]
+
+      await button.trigger('pointerdown', { pointerId: 41, button: 0, clientX: 20, clientY: 30 })
+      await button.trigger('pointerup', { pointerId: 41, button: 0, clientX: 25, clientY: 34 })
+      await flushPromises()
+      expect(fetchImpl.mock.calls.filter(([, init]) => JSON.parse(init.body).action === 'admin_stats')).toHaveLength(1)
+
+      // jsdomのtriggerはdetail=0。iOSが0を返す場合でも、直前の押下印があれば合成clickとして抑止する。
+      await button.trigger('click')
+      await flushPromises()
+      expect(fetchImpl.mock.calls.filter(([, init]) => JSON.parse(init.body).action === 'admin_stats')).toHaveLength(1)
+    })
+
+    it('pointerを伴わないclickだけでも1回読み込む', async () => {
+      localStorage.setItem(ADMIN_KEY, 'adm-ok')
+      const fetchImpl = api()
+      const wrapper = await mountReview(fetchImpl)
+      await openAdminPanel(wrapper)
+      await flushPromises()
+
+      await wrapper.findAll('.device-button')[0].trigger('click')
+      await flushPromises()
+
+      expect(fetchImpl.mock.calls.filter(([, init]) => JSON.parse(init.body).action === 'admin_stats')).toHaveLength(1)
+    })
+
+    it('移動が10pxを超えたpointer操作とpointercancelでは読み込まない', async () => {
+      localStorage.setItem(ADMIN_KEY, 'adm-ok')
+      const fetchImpl = api()
+      const wrapper = await mountReview(fetchImpl)
+      await openAdminPanel(wrapper)
+      await flushPromises()
+      const button = wrapper.findAll('.device-button')[0]
+
+      await button.trigger('pointerdown', { pointerId: 51, button: 0, clientX: 10, clientY: 10 })
+      await button.trigger('pointerup', { pointerId: 51, button: 0, clientX: 21, clientY: 10 })
+      await button.trigger('pointerdown', { pointerId: 52, button: 0, clientX: 10, clientY: 10 })
+      await button.trigger('pointercancel', { pointerId: 52, button: 0, clientX: 10, clientY: 10 })
+      await flushPromises()
+
+      expect(fetchImpl.mock.calls.filter(([, init]) => JSON.parse(init.body).action === 'admin_stats')).toHaveLength(0)
     })
 
     it('保存済みの管理者用コードがあれば、開くだけで端末一覧を出す。拒否されたら保存を消す', async () => {
