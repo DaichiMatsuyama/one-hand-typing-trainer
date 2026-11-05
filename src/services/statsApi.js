@@ -1,3 +1,5 @@
+import { sanitizeReviewStats } from '../domain/review.js'
+
 const TIMEOUT_MS = 15_000
 
 /**
@@ -29,7 +31,7 @@ async function post(endpoint, payload, fetchImpl = (...args) => globalThis.fetch
 
 export async function fetchStats({ endpoint, access, fetchImpl }) {
   const result = await post(endpoint, { action: 'stats', code: access.code, deviceId: access.deviceId }, fetchImpl)
-  return result.ok ? { ok: true, stats: result.data.stats } : result
+  return result.ok ? { ok: true, stats: sanitizeReviewStats(result.data.stats) } : result
 }
 
 export async function fetchDevices({ endpoint, access, adminCode, fetchImpl }) {
@@ -43,5 +45,5 @@ export async function fetchDeviceStats({ endpoint, access, adminCode, targetDevi
     { action: 'admin_stats', code: access.code, adminCode, targetDeviceId },
     fetchImpl,
   )
-  return result.ok ? { ok: true, stats: result.data.stats } : result
+  return result.ok ? { ok: true, stats: sanitizeReviewStats(result.data.stats) } : result
 }

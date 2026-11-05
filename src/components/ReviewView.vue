@@ -14,12 +14,20 @@ import {
   formatJstDate,
   formatPracticeTime,
   heatLevel,
+  homePositionSummary,
   isReviewStats,
+  kpmSeries,
   keyMissStats,
+  listRunConditions,
+  personalBestItems,
+  recentRunItems,
+  sanitizeReviewStats,
+  sanitizeRuns,
   shortDeviceId,
   summarizeDaily,
   weakestKeys,
 } from '../domain/review.js'
+import { formatReturnSeconds } from '../domain/homePosition.js'
 import { fetchDevices, fetchDeviceStats, fetchStats } from '../services/statsApi.js'
 import { remoteSync } from '../services/remoteSync.js'
 
@@ -66,7 +74,7 @@ function readReviewCache() {
     if (cached && typeof cached === 'object' && !Array.isArray(cached)
       && cached.deviceId === props.access.deviceId
       && Number.isFinite(cached.savedAt)
-      && isReviewStats(cached.stats)) return cached.stats
+      && isReviewStats(cached.stats)) return sanitizeReviewStats(cached.stats)
   } catch {
     // 不正なJSONも下で破棄する
   }
@@ -98,6 +106,7 @@ const adminBusy = ref(false)
 const adminError = ref('')
 const devices = ref(null)
 const viewing = ref(null) // null=この端末 / { deviceId, label }
+const selectedKpmConditionKey = ref('')
 
 function readAdminCode() {
   try {
@@ -182,6 +191,7 @@ async function load() {
     // 端末名だけが先に切り替わり、直前の端末の成績が見える状態を作らない。
     stats.value = null
     displayedTargetId = targetId
+    selectedKpmConditionKey.value = ''
   }
 
   await waitForPendingFlush()
@@ -337,6 +347,18 @@ const bars = computed(() => dailyBars(stats.value?.daily))
 const dailySummary = computed(() => summarizeDaily(stats.value?.daily))
 const points = computed(() => accuracyPoints(stats.value?.daily))
 const confusions = computed(() => (stats.value?.confusions ?? []).slice(0, MAX_CONFUSIONS_SHOWN))
+const runs = computed(() => sanitizeRuns(stats.value?.runs))
+const recentRuns = computed(() => recentRunItems(runs.value, 8))
+const bestRuns = computed(() => personalBestItems(runs.value, 8))
+const allRunConditions = computed(() => listRunConditions(runs.value))
+const kpmConditions = computed(() => listRunConditions(runs.value, { minRuns: 2, limit: 4 }))
+const selectedKpmCondition = computed(() => (
+  allRunConditions.value.find((condition) => condition.key === selectedKpmConditionKey.value)
+    ?? allRunConditions.value[0]
+    ?? null
+))
+const selectedKpmSeries = computed(() => kpmSeries(runs.value, selectedKpmCondition.value?.run, 15))
+const hpSummary = computed(() => homePositionSummary(runs.value, 10))
 
 // SVGの座標(2つのグラフで共通の横幅・高さ)
 const CHART = { width: 336, height: 150, top: 18, bottom: 28 }
@@ -397,6 +419,48 @@ const lineAria = computed(() => {
   const last = points.value.at(-1)
   return `正答率の推移。最後の記録は${last.label}の${last.percent}%です。`
 })
+
+function buildTrendGeometry(series) {
+  const right = CHART.width - 8
+  const span = right - LINE_LEFT
+  const ceiling = Math.max(1, ...series.map((point) => point.value))
+  const dots = series.map((point, index) => ({
+    ...point,
+    x: series.length === 1 ? LINE_LEFT + span / 2 : LINE_LEFT + (index / (series.length - 1)) * span,
+    y: CHART.top + plotHeight - (point.value / ceiling) * plotHeight,
+    showLabel: index % 2 === 0 || index === series.length - 1,
+  }))
+  return {
+    ceiling,
+    dots,
+    path: dots.map((dot) => `${dot.x.toFixed(1)},${dot.y.toFixed(1)}`).join(' '),
+  }
+}
+
+const kpmGeometry = computed(() => buildTrendGeometry(selectedKpmSeries.value))
+const hpGeometry = computed(() => buildTrendGeometry(hpSummary.value.points))
+const kpmAria = computed(() => {
+  if (selectedKpmSeries.value.length < 2) return '同じ条件のKPM記録は2回未満です。'
+  const last = selectedKpmSeries.value.at(-1)
+  return `KPMの推移。${selectedKpmSeries.value.length}回分、最新は${last.label}の${last.value} KPMです。`
+})
+const hpAria = computed(() => {
+  if (hpSummary.value.points.length === 0) return '平均復帰時間の記録はまだありません。'
+  const last = hpSummary.value.points.at(-1)
+  return `ホームポジションの平均復帰時間の推移。最新は${last.label}の${formatReturnSeconds(last.value)}です。`
+})
+
+function selectKpmCondition(condition) {
+  selectedKpmConditionKey.value = condition.key
+}
+
+function trendY(value, ceiling) {
+  return CHART.top + plotHeight - (value / ceiling) * plotHeight
+}
+
+function formatSecondsValue(ms) {
+  return (Math.round(ms / 100) / 10).toFixed(1)
+}
 
 // ---- 画面の向きに合わせた読み込み ------------------------------------------
 const portraitQuery = typeof window.matchMedia === 'function'
@@ -637,6 +701,112 @@ defineExpose({ load })
             </li>
           </ol>
           <p v-else class="review-note">押し間違いの記録は、まだありません。</p>
+        </section>
+      </template>
+
+      <template v-if="runs.length">
+        <section class="review-section" aria-labelledby="review-recent-runs" data-testid="review-recent-runs">
+          <h3 id="review-recent-runs">最近の練習</h3>
+          <ul class="review-run-list">
+            <li v-for="(item, index) in recentRuns" :key="`${item.run.ts}-${item.run.mode}-${index}`">
+              <div class="review-run-context">
+                <time :datetime="item.run.ts">{{ item.dateTime }}</time>
+                <span>{{ item.mode }}</span>
+                <small v-if="item.homePosition" class="review-run-badge">HP</small>
+                <small v-if="item.interrupted" class="review-run-badge is-interrupted">途中</small>
+              </div>
+              <dl class="review-run-metrics">
+                <div><dt>ランク</dt><dd>{{ item.rank ?? '-' }}</dd></div>
+                <div><dt>KPM</dt><dd>{{ item.kpm ?? '-' }}</dd></div>
+                <div><dt>正答率</dt><dd>{{ item.accuracy }}%</dd></div>
+              </dl>
+            </li>
+          </ul>
+        </section>
+
+        <section class="review-section" aria-labelledby="review-personal-bests" data-testid="review-personal-bests">
+          <h3 id="review-personal-bests">自己ベスト</h3>
+          <ul v-if="bestRuns.length" class="review-best-list">
+            <li v-for="item in bestRuns" :key="item.key">
+              <span>{{ item.label }}</span>
+              <strong><span :aria-label="`ランク ${item.rank}`">{{ item.rank }}</span>・{{ item.kpm }} KPM</strong>
+            </li>
+          </ul>
+          <p v-else class="review-note" data-testid="review-best-empty">まだありません。</p>
+        </section>
+
+        <section class="review-section" aria-labelledby="review-kpm" data-testid="review-kpm">
+          <h3 id="review-kpm">KPMの推移</h3>
+          <div v-if="kpmConditions.length" class="review-condition-tabs" role="group" aria-label="KPMの条件">
+            <button
+              v-for="condition in kpmConditions"
+              :key="condition.key"
+              type="button"
+              :class="{ selected: selectedKpmCondition?.key === condition.key }"
+              :aria-pressed="selectedKpmCondition?.key === condition.key"
+              @click="selectKpmCondition(condition)"
+            >{{ condition.label }}</button>
+          </div>
+          <p v-if="selectedKpmCondition" class="review-condition-current">
+            {{ selectedKpmCondition.label }}
+          </p>
+          <p v-if="selectedKpmSeries.length < 2" class="review-note" data-testid="review-kpm-empty">
+            同じ条件で2回以上練習すると表示します。
+          </p>
+          <svg
+            v-else
+            class="review-chart review-trend-chart"
+            :viewBox="`0 0 ${CHART.width} ${CHART.height}`"
+            role="img"
+            :aria-label="kpmAria"
+            data-testid="chart-kpm"
+          >
+            <g v-for="level in [0, kpmGeometry.ceiling / 2, kpmGeometry.ceiling]" :key="level">
+              <line :x1="LINE_LEFT" :x2="CHART.width - 8" :y1="trendY(level, kpmGeometry.ceiling)" :y2="trendY(level, kpmGeometry.ceiling)" :class="level === 0 ? 'axis' : 'grid'" />
+              <text :x="LINE_LEFT - 4" :y="trendY(level, kpmGeometry.ceiling) + 3" text-anchor="end" class="tick">{{ Math.round(level) }}</text>
+            </g>
+            <polyline :points="kpmGeometry.path" class="line" />
+            <g v-for="(dot, index) in kpmGeometry.dots" :key="`${dot.ts}-${index}`">
+              <circle :cx="dot.x" :cy="dot.y" r="3.5" class="dot" data-testid="kpm-dot" />
+              <text :x="dot.x" :y="dot.y - 7" text-anchor="middle" class="value">{{ dot.value }}</text>
+              <text v-if="dot.showLabel" :x="dot.x" :y="CHART.top + plotHeight + 14" text-anchor="middle" class="tick">{{ dot.label }}</text>
+            </g>
+          </svg>
+        </section>
+
+        <section
+          v-if="hpSummary.hasRuns"
+          class="review-section"
+          aria-labelledby="review-home-position"
+          data-testid="review-home-position"
+        >
+          <h3 id="review-home-position">ホームポジションの成績</h3>
+          <dl class="review-hp-totals">
+            <div><dt>成功</dt><dd>{{ hpSummary.successCount }}回</dd></div>
+            <div><dt>スキップ</dt><dd>{{ hpSummary.skipCount }}回</dd></div>
+            <div><dt>平均復帰</dt><dd>{{ formatReturnSeconds(hpSummary.avgReturnMs) }}</dd></div>
+          </dl>
+          <p class="review-chart-title">平均復帰時間(秒)の推移</p>
+          <p v-if="hpSummary.points.length === 0" class="review-note">平均復帰時間の記録は、まだありません。</p>
+          <svg
+            v-else
+            class="review-chart review-trend-chart"
+            :viewBox="`0 0 ${CHART.width} ${CHART.height}`"
+            role="img"
+            :aria-label="hpAria"
+            data-testid="chart-home-position"
+          >
+            <g v-for="level in [0, hpGeometry.ceiling / 2, hpGeometry.ceiling]" :key="level">
+              <line :x1="LINE_LEFT" :x2="CHART.width - 8" :y1="trendY(level, hpGeometry.ceiling)" :y2="trendY(level, hpGeometry.ceiling)" :class="level === 0 ? 'axis' : 'grid'" />
+              <text :x="LINE_LEFT - 4" :y="trendY(level, hpGeometry.ceiling) + 3" text-anchor="end" class="tick">{{ formatSecondsValue(level) }}</text>
+            </g>
+            <polyline v-if="hpGeometry.dots.length > 1" :points="hpGeometry.path" class="line" />
+            <g v-for="(dot, index) in hpGeometry.dots" :key="`${dot.ts}-${index}`">
+              <circle :cx="dot.x" :cy="dot.y" r="3.5" class="dot" data-testid="hp-dot" />
+              <text :x="dot.x" :y="dot.y - 7" text-anchor="middle" class="value">{{ formatSecondsValue(dot.value) }}</text>
+              <text v-if="dot.showLabel" :x="dot.x" :y="CHART.top + plotHeight + 14" text-anchor="middle" class="tick">{{ dot.label }}</text>
+            </g>
+          </svg>
         </section>
       </template>
     </template>

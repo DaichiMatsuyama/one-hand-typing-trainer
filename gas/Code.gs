@@ -68,7 +68,9 @@ function doPost(e) {
   if (body.action === 'stats') {
     var deviceId = validDeviceId_(body.deviceId);
     if (!deviceId) return respond_({ ok: false, error: 'bad_request' });
-    return respond_({ ok: true, stats: buildStats_(readRecords_(deviceId), Date.now()) });
+    var stats = buildStats_(readRecords_(deviceId), Date.now());
+    stats.runs = readRuns_(deviceId);
+    return respond_({ ok: true, stats: stats });
   }
   if (body.action === 'admin_devices' || body.action === 'admin_stats') return handleAdmin_(body, cache);
   return respond_({ ok: false, error: 'bad_request' });
@@ -88,10 +90,9 @@ function handleAdmin_(body, cache) {
   }
   var target = validDeviceId_(body.targetDeviceId);
   if (!target) return respond_({ ok: false, error: 'bad_request' });
-  return respond_({
-    ok: true,
-    stats: buildStats_(records.filter(function (r) { return r.deviceId === target; }), Date.now()),
-  });
+  var stats = buildStats_(records.filter(function (r) { return r.deviceId === target; }), Date.now());
+  stats.runs = readRuns_(target);
+  return respond_({ ok: true, stats: stats });
 }
 
 function handleLog_(body) {
@@ -440,6 +441,14 @@ function getSheet_(sheetName, headers, validateHeaders) {
   return sheet;
 }
 
+// 読み取り時にシートを作らない。runsがまだ無い端末でも、振り返り表示に副作用を起こさないために使う。
+function getExistingSheet_(sheetName) {
+  var props = PropertiesService.getScriptProperties();
+  var sheetId = props.getProperty('SHEET_ID');
+  var spreadsheet = sheetId ? SpreadsheetApp.openById(sheetId) : SpreadsheetApp.getActiveSpreadsheet();
+  return spreadsheet.getSheetByName(sheetName);
+}
+
 // シートの列数(グリッド)が足りないと、範囲外への書き込みが例外になる。必要な列数まで足す。
 function ensureColumns_(sheet, count) {
   var maxColumns = sheet.getMaxColumns();
@@ -526,6 +535,76 @@ function readRecords_(deviceId) {
     });
   });
   return records;
+}
+
+var MAX_RUNS_IN_STATS = 100;
+
+function emptyCell_(value) {
+  return value === '' || value === null || value === undefined;
+}
+
+function nullableNumber_(value) {
+  if (emptyCell_(value)) return null;
+  return typeof value === 'number' && isFinite(value) ? value : null;
+}
+
+function nullableRankVersion_(value) {
+  if (emptyCell_(value)) return null;
+  if (typeof value === 'boolean') return value;
+  return typeof value === 'number' && isFinite(value) ? value : null;
+}
+
+// runsは書き込み用getSheet_を通さず、旧24列または新28列のヘッダーと完全一致するときだけ読む。
+// 個人を特定し得るid/deviceIdと、表示に不要なreceivedAt/appVersionは応答へ含めない。
+function readRuns_(deviceId) {
+  var sheet = getExistingSheet_(RUN_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var lastColumn = sheet.getLastColumn();
+  if (lastColumn !== LEGACY_RUN_HEADER_COUNT && lastColumn !== RUN_HEADERS.length) return [];
+  var headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  for (var h = 0; h < lastColumn; h++) {
+    if (headers[h] !== RUN_HEADERS[h]) return [];
+  }
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastColumn).getValues();
+  var runs = [];
+  values.forEach(function (row) {
+    if (normalizeText_(row[3]) !== deviceId) return;
+    runs.push({
+      sortMs: isFinite(Date.parse(normalizeText_(row[2])))
+        ? Date.parse(normalizeText_(row[2]))
+        : row[0] instanceof Date ? row[0].getTime() : -Infinity,
+      run: {
+        ts: normalizeText_(row[2]),
+        mode: normalizeText_(row[4]),
+        hand: normalizeText_(row[5]),
+        level: nullableNumber_(row[6]),
+        includeSymbols: row[7],
+        layout: normalizeText_(row[8]),
+        targetCount: nullableNumber_(row[9]),
+        timeLimitSec: nullableNumber_(row[10]),
+        homePosition: row[11],
+        endedBy: normalizeText_(row[12]),
+        activeMs: nullableNumber_(row[13]),
+        inputMs: nullableNumber_(row[14]),
+        completedQuestions: nullableNumber_(row[15]),
+        correctCount: nullableNumber_(row[16]),
+        mistakes: nullableNumber_(row[17]),
+        attempts: nullableNumber_(row[18]),
+        accuracy: nullableNumber_(row[19]),
+        kpm: nullableNumber_(row[20]),
+        menuOpenCount: nullableNumber_(row[21]),
+        hpSuccessCount: lastColumn > LEGACY_RUN_HEADER_COUNT ? nullableNumber_(row[24]) : null,
+        hpSkipCount: lastColumn > LEGACY_RUN_HEADER_COUNT ? nullableNumber_(row[25]) : null,
+        hpAvgReturnMs: lastColumn > LEGACY_RUN_HEADER_COUNT ? nullableNumber_(row[26]) : null,
+        hpMinReturnMs: lastColumn > LEGACY_RUN_HEADER_COUNT ? nullableNumber_(row[27]) : null,
+        rankVersion: nullableRankVersion_(row[22]),
+      },
+    });
+  });
+  return runs.sort(function (left, right) { return right.sortMs - left.sortMs; })
+    .slice(0, MAX_RUNS_IN_STATS)
+    .map(function (entry) { return entry.run; });
 }
 
 function recordTimeMs_(record) {

@@ -5,11 +5,21 @@ import {
   accuracyPoints,
   dailyBars,
   formatDateLabel,
+  formatConditionLabel,
   formatJstDate,
+  formatJstDateTime,
   formatPracticeTime,
   heatLevel,
+  homePositionSummary,
   isReviewStats,
+  kpmSeries,
   keyMissStats,
+  listRunConditions,
+  personalBestItems,
+  recentRunItems,
+  runRank,
+  sanitizeReviewStats,
+  sanitizeRuns,
   shortDeviceId,
   summarizeDaily,
   weakestKeys,
@@ -29,6 +39,12 @@ describe('isReviewStats', () => {
     expect(isReviewStats(valid)).toBe(true)
   })
 
+  it('旧GASのrunsなしと、不正なruns自体は既存集計を壊さない', () => {
+    expect(isReviewStats(valid)).toBe(true)
+    expect(isReviewStats({ ...valid, runs: 'broken' })).toBe(true)
+    expect(sanitizeReviewStats({ ...valid, runs: 'broken' })).not.toHaveProperty('runs')
+  })
+
   it.each([
     ['dailyの要素', { daily: [null] }],
     ['confusionsの要素', { confusions: [null] }],
@@ -38,6 +54,170 @@ describe('isReviewStats', () => {
     ['streakの数値', { streak: '1' }],
   ])('%sが不正なら拒否する', (_label, replacement) => {
     expect(isReviewStats({ ...valid, ...replacement })).toBe(false)
+  })
+})
+
+const run = (overrides = {}) => ({
+  ts: '2026-11-03T03:04:00.000Z',
+  mode: 'timeAttack',
+  hand: 'left',
+  level: 1,
+  includeSymbols: false,
+  layout: 'jis',
+  targetCount: 10,
+  timeLimitSec: null,
+  homePosition: false,
+  endedBy: 'completed',
+  activeMs: 12_000,
+  inputMs: 10_000,
+  completedQuestions: 10,
+  correctCount: 40,
+  mistakes: 2,
+  attempts: 42,
+  accuracy: 95,
+  kpm: 240,
+  menuOpenCount: 0,
+  hpSuccessCount: 0,
+  hpSkipCount: 0,
+  hpAvgReturnMs: null,
+  hpMinReturnMs: null,
+  rankVersion: null,
+  ...overrides,
+})
+
+describe('runsの検証と最近の練習', () => {
+  it('行ごとに検証し、不正行だけを捨てる。旧24列相当のHP nullとboolean rankVersionは受け入れる', () => {
+    const legacy = run({
+      hpSuccessCount: null, hpSkipCount: null, hpAvgReturnMs: null, hpMinReturnMs: null,
+      rankVersion: true,
+    })
+    const actual = sanitizeRuns([
+      legacy,
+      run({ hand: 'both' }),
+      run({ attempts: 43 }),
+      run({ kpm: 999 }),
+      null,
+    ])
+    expect(actual).toEqual([legacy])
+    expect(sanitizeRuns(undefined)).toEqual([])
+  })
+
+  it('直近8回を新しい順にし、日本時間・モード・ランク・HP・途中を整形する', () => {
+    const items = recentRunItems([
+      run({ ts: '2026-11-02T15:01:00.000Z', kpm: 240 }),
+      run({
+        ts: '2026-11-03T15:05:00.000Z', mode: 'timeLimit', targetCount: null,
+        timeLimitSec: 60, endedBy: 'ended', homePosition: true,
+      }),
+      run({
+        ts: '2026-11-03T14:00:00.000Z', mode: 'free', targetCount: null,
+        endedBy: 'ended', kpm: 240,
+      }),
+    ])
+    expect(items.map((item) => item.dateTime)).toEqual(['11/4 0:05', '11/3 23:00', '11/3 0:01'])
+    expect(items[0]).toMatchObject({ mode: '制限時間60秒', rank: null, homePosition: true, interrupted: true })
+    expect(items[1]).toMatchObject({ mode: 'フリー', rank: null, interrupted: false })
+    expect(items[2]).toMatchObject({ mode: 'タイムアタック10問', rank: 'B' })
+    expect(formatJstDateTime('broken')).toBe('broken')
+    expect(runRank(run({ rankVersion: 999 }))).toBe('B')
+    expect(recentRunItems(Array.from({ length: 9 }, (_, index) => run({
+      ts: `2026-10-${String(index + 1).padStart(2, '0')}T03:00:00Z`,
+    })))).toHaveLength(8)
+  })
+})
+
+describe('run条件・自己ベスト・KPM系列', () => {
+  it('8条件を区別し、最近練習した順・最低回数・最大数で条件を列挙する', () => {
+    const values = [
+      run({ ts: '2026-11-03T04:00:00Z', hand: 'right' }),
+      run({ ts: '2026-11-03T03:00:00Z', hand: 'right' }),
+      run({ ts: '2026-11-03T02:00:00Z', level: 2 }),
+      run({ ts: '2026-11-03T01:00:00Z', level: 2 }),
+      run({ ts: '2026-11-03T00:00:00Z', includeSymbols: true }),
+    ]
+    const conditions = listRunConditions(values, { minRuns: 2, limit: 1 })
+    expect(conditions).toHaveLength(1)
+    expect(conditions[0]).toMatchObject({ count: 2 })
+    expect(conditions[0].label).toContain('右手')
+    expect(formatConditionLabel(run({ homePosition: true, layout: 'us' }))).toBe(
+      'タイムアタック10問・左手・Lv.1・記号なし・US・HPあり',
+    )
+
+    const fiveConditions = Array.from({ length: 5 }, (_, index) => [
+      run({ ts: `2026-10-${String(index + 1).padStart(2, '0')}T04:00:00Z`, targetCount: index + 1 }),
+      run({ ts: `2026-10-${String(index + 1).padStart(2, '0')}T03:00:00Z`, targetCount: index + 1 }),
+    ]).flat()
+    expect(listRunConditions(fiveConditions, { minRuns: 2, limit: 4 })).toHaveLength(4)
+  })
+
+  it('条件ごとにランク→KPMで最良を選び、フリー・途中・メニュー使用・KPMなしを除く。同点は新しい回を保つ', () => {
+    const newestTie = run({ ts: '2026-11-04T03:00:00Z', kpm: 240 })
+    const results = personalBestItems([
+      newestTie,
+      run({ ts: '2026-11-03T03:00:00Z', kpm: 240 }),
+      run({ ts: '2026-11-01T03:00:00Z', menuOpenCount: 1 }),
+      run({ ts: '2026-10-31T03:00:00Z', endedBy: 'ended' }),
+      run({
+        ts: '2026-10-30T03:00:00Z', mode: 'free', targetCount: null, endedBy: 'ended',
+      }),
+    ])
+    expect(results).toHaveLength(1)
+    expect(results[0]).toMatchObject({ rank: 'B', kpm: 240, run: newestTie })
+    const sRank = run({
+      ts: '2026-11-02T03:00:00Z', activeMs: 26_000, inputMs: 25_000,
+      correctCount: 50, mistakes: 0, attempts: 50, accuracy: 100, kpm: 120,
+    })
+    expect(personalBestItems([newestTie, sRank])[0]).toMatchObject({ rank: 'S', kpm: 120, run: sRank })
+    expect(personalBestItems([run({ kpm: null })])).toEqual([])
+    expect(personalBestItems(Array.from({ length: 9 }, (_, index) => run({
+      ts: `2026-10-${String(index + 1).padStart(2, '0')}T03:00:00Z`, targetCount: index + 1,
+    })))).toHaveLength(8)
+  })
+
+  it('KPM系列は同条件だけ・途中終了とnullを除き、直近15回を古い順にする(フリーのendedは完了扱い)', () => {
+    const target = run()
+    const values = Array.from({ length: 17 }, (_, index) => run({
+      ts: `2026-11-${String(index + 1).padStart(2, '0')}T03:00:00Z`,
+      kpm: 240,
+    }))
+    values.push(run({ ts: '2026-11-20T03:00:00Z', endedBy: 'ended' }))
+    values.push(run({ ts: '2026-11-21T03:00:00Z', hand: 'right' }))
+    const series = kpmSeries(values, target)
+    expect(series).toHaveLength(15)
+    expect(series[0].ts).toContain('11-03')
+    expect(series.at(-1).ts).toContain('11-17')
+
+    const free = run({ mode: 'free', targetCount: null, endedBy: 'ended' })
+    expect(kpmSeries([free], free)).toHaveLength(1)
+    expect(kpmSeries([run({ kpm: null })], target)).toEqual([])
+  })
+})
+
+describe('ホームポジションの成績', () => {
+  it('成功回数で加重した平均と合計を出し、グラフは直近10回を古い順にする', () => {
+    const values = Array.from({ length: 12 }, (_, index) => run({
+      ts: `2026-10-${String(index + 1).padStart(2, '0')}T03:00:00Z`,
+      homePosition: true,
+      hpSuccessCount: index === 0 ? 2 : 1,
+      hpSkipCount: 1,
+      hpAvgReturnMs: index === 0 ? 2000 : 1000,
+      hpMinReturnMs: 500,
+      activeMs: 20_000,
+    }))
+    values.push(run({ ts: '2026-11-01T03:00:00Z' }))
+    const summary = homePositionSummary(values)
+    expect(summary).toMatchObject({ hasRuns: true, successCount: 13, skipCount: 12, avgReturnMs: 1154 })
+    expect(summary.points).toHaveLength(10)
+    expect(summary.points[0].ts).toContain('10-03')
+    expect(summary.points.at(-1).ts).toContain('10-12')
+  })
+
+  it('旧行だけでもセクション対象にし、未知の回数は合計へ足さない', () => {
+    expect(homePositionSummary([run({
+      homePosition: true,
+      hpSuccessCount: null, hpSkipCount: null, hpAvgReturnMs: null, hpMinReturnMs: null,
+    })])).toMatchObject({ hasRuns: true, successCount: 0, skipCount: 0, avgReturnMs: null, points: [] })
+    expect(homePositionSummary([]).hasRuns).toBe(false)
   })
 })
 

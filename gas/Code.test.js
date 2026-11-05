@@ -179,6 +179,21 @@ const LEGACY_RUN_HEADERS = [
 const HP_HEADERS = ['hpSuccessCount', 'hpSkipCount', 'hpAvgReturnMs', 'hpMinReturnMs']
 const RUN_HEADERS = [...LEGACY_RUN_HEADERS, ...HP_HEADERS]
 
+const storedRunRow = (overrides = {}, { deviceId = 'dev-mine-01', receivedAt = new Date(NOW), legacy = false } = {}) => {
+  const value = runRecord(overrides)
+  const row = [
+    receivedAt, value.id, value.ts, deviceId, value.mode, value.hand, value.level,
+    value.includeSymbols, value.layout, value.targetCount, value.timeLimitSec, value.homePosition,
+    value.endedBy, value.activeMs, value.inputMs, value.completedQuestions, value.correctCount,
+    value.mistakes, value.attempts, value.accuracy, value.kpm, value.menuOpenCount,
+    value.rankVersion ?? '', value.appVersion,
+  ]
+  if (!legacy) row.push(
+    value.hpSuccessCount ?? '', value.hpSkipCount ?? '', value.hpAvgReturnMs ?? '', value.hpMinReturnMs ?? '',
+  )
+  return row
+}
+
 const runResponse = (saved, rejected = 0, rejectedIds = []) => ({
   ok: true, saved, rejected, rejectedIds,
 })
@@ -653,7 +668,8 @@ describe('Code.gs runごとの記録', () => {
     const before = env.post({ action: 'stats', code: 'secret-code-123', deviceId: 'dev-mine-01' })
     expect(env.post(postRuns([runRecord()]))).toEqual(runResponse(1))
     const after = env.post({ action: 'stats', code: 'secret-code-123', deviceId: 'dev-mine-01' })
-    expect(after).toEqual(before)
+    expect({ ...after, stats: { ...after.stats, runs: [] } }).toEqual(before)
+    expect(after.stats.runs).toHaveLength(1)
     expect(env.dataRows()).toHaveLength(1)
     expect(env.dataRows('runs')).toHaveLength(1)
   })
@@ -718,6 +734,70 @@ describe('Code.gs 成績の集計(振り返り画面用)', () => {
     expect(result.daily.every((day) => day.records === 0)).toBe(true)
     expect(result.keys).toEqual({})
     expect(result.confusions).toEqual([])
+    expect(result.runs).toEqual([])
+    // 読み取りでは未作成のrunsシートを新規作成しない。
+    expect(env.rowsFor('runs')).toEqual([])
+  })
+
+  it('runsを対象端末だけ新しい順で返し、非表示列を含めずrankVersionのbooleanを保つ', () => {
+    env.seedSheet('runs', [
+      RUN_HEADERS,
+      storedRunRow({ id: 'run-old-1', ts: '2026-11-01T03:00:00.000Z' }),
+      storedRunRow({ id: 'run-other', ts: '2026-11-03T04:00:00.000Z' }, { deviceId: 'dev-other-01' }),
+      storedRunRow({
+        id: 'run-new-1', ts: '2026-11-03T03:00:00.000Z', rankVersion: true,
+        homePosition: true, hpSuccessCount: 9, hpSkipCount: 1, hpAvgReturnMs: 1200, hpMinReturnMs: 800,
+      }),
+    ])
+    const result = stats('dev-mine-01').stats.runs
+    expect(result).toHaveLength(2)
+    expect(result.map((item) => item.ts)).toEqual([
+      '2026-11-03T03:00:00.000Z', '2026-11-01T03:00:00.000Z',
+    ])
+    expect(result[0]).toMatchObject({
+      mode: 'timeAttack', hand: 'right', level: 2, targetCount: 10, timeLimitSec: null,
+      homePosition: true, hpSuccessCount: 9, hpSkipCount: 1,
+      hpAvgReturnMs: 1200, hpMinReturnMs: 800, rankVersion: true,
+    })
+    expect(result[0]).not.toHaveProperty('id')
+    expect(result[0]).not.toHaveProperty('deviceId')
+    expect(result[0]).not.toHaveProperty('appVersion')
+  })
+
+  it('旧24列のrunsを読み、新4列はnullで返す', () => {
+    env.seedSheet('runs', [
+      LEGACY_RUN_HEADERS,
+      storedRunRow({ id: 'run-old-1' }, { legacy: true }),
+    ])
+    expect(stats('dev-mine-01').stats.runs[0]).toMatchObject({
+      hpSuccessCount: null, hpSkipCount: null, hpAvgReturnMs: null, hpMinReturnMs: null,
+      rankVersion: null,
+    })
+    // 読み取りでは旧ヘッダーを28列へ移行しない。
+    expect(env.rowsFor('runs')[0]).toEqual(LEGACY_RUN_HEADERS)
+  })
+
+  it('runsが空または見出し不一致ならrunsだけ空にし、records由来の集計は変えない', () => {
+    log('dev-mine-01', [rec('a1', '2026-11-03T03:00:00.000Z')])
+    env.seedSheet('runs', [['wrong', ...RUN_HEADERS.slice(1)], storedRunRow()])
+    const result = stats('dev-mine-01').stats
+    expect(result.runs).toEqual([])
+    expect(result.totals).toMatchObject({ records: 1, practiceMs: 4200, attempts: 5, mistakes: 1 })
+    expect(env.rowsFor('runs')[0][0]).toBe('wrong')
+  })
+
+  it('runsは応答サイズを抑えるため新しい順に最大100件まで返す', () => {
+    const start = Date.UTC(2026, 10, 1, 0, 0, 0)
+    const rows = Array.from({ length: 105 }, (_, index) => storedRunRow({
+      id: `run-${String(index).padStart(4, '0')}`,
+      ts: new Date(start + index * 60_000).toISOString(),
+      activeMs: 12_000 + index,
+    }))
+    env.seedSheet('runs', [RUN_HEADERS, ...rows])
+    const result = stats('dev-mine-01').stats.runs
+    expect(result).toHaveLength(100)
+    expect(result[0].activeMs).toBe(12_104)
+    expect(result.at(-1).activeMs).toBe(12_005)
   })
 
   it('自分の端末の記録だけを集計し、他の端末は含めない', () => {
@@ -821,6 +901,23 @@ describe('Code.gs 成績の集計(振り返り画面用)', () => {
     expect(env.post({ action: 'admin_stats', code: CODE, adminCode: ADMIN })).toEqual({ ok: false, error: 'bad_request' })
     expect(env.post({ action: 'admin_stats', code: CODE, adminCode: ADMIN, targetDeviceId: 'short' }))
       .toEqual({ ok: false, error: 'bad_request' })
+  })
+
+  it('管理者: admin_statsにも選択した端末のrunsだけを付け、admin_devicesは変えない', () => {
+    log('dev-old-01', [rec('o1', '2026-11-03T03:00:00.000Z')])
+    log('dev-new-01', [rec('n1', '2026-11-03T04:00:00.000Z')])
+    env.seedSheet('runs', [
+      RUN_HEADERS,
+      storedRunRow({ id: 'run-old-1', ts: '2026-11-03T03:00:00.000Z' }, { deviceId: 'dev-old-01' }),
+      storedRunRow({ id: 'run-new-1', ts: '2026-11-03T04:00:00.000Z' }, { deviceId: 'dev-new-01' }),
+    ])
+    const devices = env.post({ action: 'admin_devices', code: CODE, adminCode: ADMIN })
+    expect(devices.devices[0]).not.toHaveProperty('runs')
+    const target = env.post({
+      action: 'admin_stats', code: CODE, adminCode: ADMIN, targetDeviceId: 'dev-old-01',
+    })
+    expect(target.stats.runs).toHaveLength(1)
+    expect(target.stats.runs[0].ts).toBe('2026-11-03T03:00:00.000Z')
   })
 
   it('通常の端末は、管理者コードなしで他の端末の集計を取れない', () => {

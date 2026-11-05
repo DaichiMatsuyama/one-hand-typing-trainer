@@ -35,6 +35,29 @@ const stats = {
   ],
 }
 
+const run = (overrides = {}) => ({
+  ts: '2026-11-03T04:00:00.000Z', mode: 'timeAttack', hand: 'left', level: 1,
+  includeSymbols: false, layout: 'jis', targetCount: 10, timeLimitSec: null,
+  homePosition: false, endedBy: 'completed', activeMs: 12_000, inputMs: 10_000,
+  completedQuestions: 10, correctCount: 40, mistakes: 2, attempts: 42, accuracy: 95,
+  kpm: 240, menuOpenCount: 0, hpSuccessCount: 0, hpSkipCount: 0,
+  hpAvgReturnMs: null, hpMinReturnMs: null, rankVersion: null,
+  ...overrides,
+})
+
+const statsWithRuns = {
+  ...stats,
+  runs: [
+    run(),
+    run({
+      ts: '2026-11-03T03:00:00.000Z', mode: 'timeLimit', targetCount: null,
+      timeLimitSec: 60, homePosition: true, endedBy: 'ended', activeMs: 13_000,
+      hpSuccessCount: 5, hpSkipCount: 1, hpAvgReturnMs: 1000, hpMinReturnMs: 800,
+    }),
+    run({ ts: '2026-11-02T04:00:00.000Z', activeMs: 14_000, inputMs: 12_000, kpm: 200 }),
+  ],
+}
+
 const emptyStats = {
   ...stats,
   totals: { records: 0, practiceMs: 0, attempts: 0, mistakes: 0, days: 0, firstDate: null, lastDate: null },
@@ -191,6 +214,61 @@ describe('ReviewView(振り返り画面)', () => {
     expect(items[0].text()).toContain('4回')
   })
 
+  it('旧GAS応答(runsなし)では既存項目を表示し、run関連セクションだけを出さない', async () => {
+    const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }))
+    expect(wrapper.get('[data-testid="review-total"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="review-recent-runs"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="review-personal-bests"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="review-kpm"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="review-home-position"]').exists()).toBe(false)
+  })
+
+  it('最近の練習・自己ベスト・KPM推移・ホームポジション成績を既存項目の下へ表示する', async () => {
+    const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats: statsWithRuns }) }))
+    const recent = wrapper.get('[data-testid="review-recent-runs"]')
+    expect(recent.text()).toContain('11/3 13:00')
+    expect(recent.text()).toContain('タイムアタック10問')
+    expect(recent.text()).toContain('制限時間60秒')
+    expect(recent.text()).toContain('HP')
+    expect(recent.text()).toContain('途中')
+    expect(recent.text()).toContain('ランクB')
+    expect(recent.text()).toContain('KPM240')
+    expect(recent.text()).toContain('正答率95%')
+
+    const best = wrapper.get('[data-testid="review-personal-bests"]')
+    expect(best.text()).toContain('タイムアタック10問・左手・Lv.1')
+    expect(best.text()).toContain('B・240 KPM')
+    expect(wrapper.findAll('[data-testid="kpm-dot"]')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="chart-kpm"]').attributes('aria-label')).toContain('最新は11/3の240 KPM')
+
+    const hp = wrapper.get('[data-testid="review-home-position"]')
+    expect(hp.text()).toContain('成功5回')
+    expect(hp.text()).toContain('スキップ1回')
+    expect(hp.text()).toContain('平均復帰1.0秒')
+    expect(wrapper.findAll('[data-testid="hp-dot"]')).toHaveLength(1)
+
+    const headings = wrapper.findAll('.review-section h3').map((heading) => heading.text())
+    expect(headings.indexOf('最近の練習')).toBeGreaterThan(headings.indexOf('よくある押し間違い'))
+  })
+
+  it('候補がなければ自己ベストは「まだありません」、KPMが2回未満なら案内を出し、HPなしならHP成績を隠す', async () => {
+    const onlyFree = {
+      ...stats,
+      runs: [run({ mode: 'free', targetCount: null, endedBy: 'ended' })],
+    }
+    const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats: onlyFree }) }))
+    expect(wrapper.get('[data-testid="review-best-empty"]').text()).toBe('まだありません。')
+    expect(wrapper.get('[data-testid="review-kpm-empty"]').text()).toContain('2回以上')
+    expect(wrapper.find('[data-testid="chart-kpm"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="review-home-position"]').exists()).toBe(false)
+  })
+
+  it('不正なrun行だけを捨て、正常行は表示する', async () => {
+    const malformed = { ...statsWithRuns, runs: [run(), { ...run(), attempts: 99 }] }
+    const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats: malformed }) }))
+    expect(wrapper.findAll('.review-run-list > li')).toHaveLength(1)
+  })
+
   it('記録がまだ無いときは、案内だけを出し、グラフは出さない', async () => {
     const wrapper = await mountReview(mockApi({ stats: () => ({ ok: true, stats: emptyStats }) }))
     expect(wrapper.get('[data-testid="review-empty"]').text()).toContain('まだ記録がありません')
@@ -325,15 +403,15 @@ describe('ReviewView(振り返り画面)', () => {
   })
 
   describe('自分の成績キャッシュ', () => {
-    it('取得結果を必要な3項目だけで保存し、コード類を含めない', async () => {
+    it('runsを含む取得結果を必要な3項目だけで保存し、コード類を含めない', async () => {
       const storage = memoryStorage({ [ADMIN_KEY]: 'admin-secret' })
       vi.stubGlobal('localStorage', storage)
-      await mountReview(mockApi({ stats: () => ({ ok: true, stats }) }))
+      await mountReview(mockApi({ stats: () => ({ ok: true, stats: statsWithRuns }) }))
 
       const saved = JSON.parse(storage.setItem.mock.calls.find(([key]) => key === REVIEW_CACHE_KEY)[1])
       expect(Object.keys(saved).sort()).toEqual(['deviceId', 'savedAt', 'stats'])
       expect(saved.deviceId).toBe(access.deviceId)
-      expect(saved.stats).toEqual(stats)
+      expect(saved.stats).toEqual(statsWithRuns)
       expect(JSON.stringify(saved)).not.toContain(access.code)
       expect(JSON.stringify(saved)).not.toContain('admin-secret')
     })
@@ -532,7 +610,7 @@ describe('ReviewView(振り返り画面)', () => {
     const api = () => mockApi({
       stats: () => ({ ok: true, stats: emptyStats }),
       admin_devices: (body) => (body.adminCode === 'adm-ok' ? { ok: true, devices } : { ok: false, error: 'invalid_admin' }),
-      admin_stats: (body) => (body.targetDeviceId === 'dev-friend-1234567' ? { ok: true, stats } : { ok: false, error: 'bad_request' }),
+      admin_stats: (body) => (body.targetDeviceId === 'dev-friend-1234567' ? { ok: true, stats: statsWithRuns } : { ok: false, error: 'bad_request' }),
     })
 
     it('管理者用コードが違うとエラーを出し、端末一覧は出さない・コードも保存しない', async () => {
@@ -565,6 +643,8 @@ describe('ReviewView(振り返り画面)', () => {
       await flushPromises()
       expect(wrapper.get('[data-testid="review-viewing"]').text()).toContain('管理者表示')
       expect(wrapper.get('[data-testid="streak"]').text()).toBe('2日')
+      expect(wrapper.get('[data-testid="review-recent-runs"]').text()).toContain('タイムアタック10問')
+      expect(wrapper.get('[data-testid="review-home-position"]').text()).toContain('成功5回')
       expect(JSON.parse(localStorage.getItem(REVIEW_CACHE_KEY)).stats).toEqual(emptyStats)
       const last = fetchImpl.mock.calls.at(-1)
       expect(JSON.parse(last[1].body)).toEqual({

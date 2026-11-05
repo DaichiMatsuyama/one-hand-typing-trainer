@@ -1991,6 +1991,173 @@ h1 {
 .review-chart .tick { fill: #4d5560; font-size: 9px; }
 .review-chart .value { fill: #222733; font-size: 9px; font-weight: 700; }
 
+/* runごとの成績 */
+.review-run-list,
+.review-best-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-run-list > li,
+.review-best-list > li {
+  min-width: 0;
+  padding: 8px 9px;
+  border-radius: 10px;
+  background: #eef4f0;
+}
+
+.review-run-context {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.review-run-context time {
+  white-space: nowrap;
+}
+
+.review-run-badge {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #d4e9e4;
+  color: #174f4b;
+  font-size: 0.65rem;
+  font-weight: 850;
+}
+
+.review-run-badge.is-interrupted {
+  background: #f9dfd6;
+  color: #8f2b22;
+}
+
+.review-run-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin: 7px 0 0;
+}
+
+.review-run-metrics div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+}
+
+.review-run-metrics dt {
+  color: #59616b;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.review-run-metrics dd {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.review-best-list > li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px 9px;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.review-best-list strong {
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+.review-condition-tabs {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0 0 6px;
+}
+
+.review-condition-tabs button {
+  min-width: 0;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid #aaa296;
+  border-radius: 999px;
+  background: white;
+  color: var(--ink);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.review-condition-tabs button.selected {
+  border-color: var(--accent-dark);
+  background: var(--accent);
+  color: white;
+}
+
+.review-condition-current {
+  margin: 3px 0 4px;
+  color: #59616b;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.review-trend-chart {
+  margin-top: 4px;
+}
+
+.review-chart-title {
+  margin: 8px 0 0;
+  color: #59616b;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.review-hp-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 0 5px;
+}
+
+.review-hp-totals div {
+  min-width: 0;
+  padding: 7px 3px;
+  border-radius: 9px;
+  background: #eef4f0;
+  text-align: center;
+}
+
+.review-hp-totals dt {
+  color: #59616b;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.review-hp-totals dd {
+  margin: 3px 0 0;
+  font-size: 0.9rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
 .confusions {
   display: grid;
   gap: 6px;
