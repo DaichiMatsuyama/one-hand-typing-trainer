@@ -14,6 +14,7 @@ const {
   settings,
   session,
   resetNotice,
+  clearEffect,
   layout,
   nextKey,
   nextFinger,
@@ -114,6 +115,8 @@ onBeforeUnmount(() => props.engine.detach())
       :layout="layout"
       :next-key="nextKey"
       :feedback="session.feedback"
+      :clear-effect="clearEffect"
+      :feedback-effects="settings.feedbackEffects"
       :disabled="session.isComplete || session.preserved || menuOpen"
       @press="pressKey"
     />

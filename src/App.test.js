@@ -322,6 +322,7 @@ describe('App', () => {
     expect(wrapper.get('.info-strip').classes()).toContain('complete')
     expect(wrapper.get('.prompt-text').text()).toContain('✓')
     expect(wrapper.get('.keyboard-panel').classes()).toContain('complete')
+    expect(wrapper.get('[data-testid="keyboard-clear-effect"]').text()).toBe('👍')
     expect(wrapper.get('.feedback').text()).toBe('クリア！ 自動で次の問題に進みます')
     expect(wrapper.find('[data-testid="next-question"]').exists()).toBe(false)
     expect(wrapper.findAll('.key').every((key) => key.attributes('aria-disabled') === 'true')).toBe(true)
@@ -336,6 +337,7 @@ describe('App', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.get('.info-strip').classes()).toContain('complete')
     expect(wrapper.get('.prompt-text').text()).toContain(firstQuestion)
+    expect(wrapper.find('[data-testid="keyboard-clear-effect"]').exists()).toBe(false)
 
     vi.advanceTimersByTime(1)
     await wrapper.vm.$nextTick()

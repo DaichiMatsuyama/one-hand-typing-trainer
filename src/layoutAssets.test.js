@@ -134,6 +134,11 @@ describe('実機向けレイアウト', () => {
     expect(styles).toContain('container-type: inline-size')
   })
 
+  it('クリア演出はキー入力を妨げず、動きを減らす設定ではアニメーションしない', () => {
+    expect(styles).toMatch(/\.keyboard-clear-effect\s*\{[\s\S]*?pointer-events:\s*none/)
+    expect(styles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.keyboard-clear-effect\s*\{[\s\S]*?animation:\s*none !important/)
+  })
+
   const landscapeCases = [
     ['iPhone SE系', 667, 375, { left: 0, right: 0, bottom: 0 }],
     ['Dynamic Island搭載機', 852, 393, { left: 59, right: 59, bottom: 21 }],

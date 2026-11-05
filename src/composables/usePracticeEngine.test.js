@@ -275,6 +275,76 @@ describe('usePracticeEngine', () => {
     expect(engine.runSummary.value.menuOpenCount).toBe(2)
   })
 
+  it('問題をノーミスでクリアするとthumbsUpを短時間だけ再生する', () => {
+    const { engine } = createEngine()
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+
+    expect(engine.clearEffect.value).toMatchObject({ id: 1, kind: 'thumbsUp' })
+    vi.advanceTimersByTime(549)
+    expect(engine.clearEffect.value?.kind).toBe('thumbsUp')
+    vi.advanceTimersByTime(1)
+    expect(engine.clearEffect.value).toBeNull()
+  })
+
+  it('ミスありの問題クリアはcircleになり、連続クリアでは新しいidで再トリガーする', () => {
+    const { engine } = createEngine()
+    engine.startRun()
+    const expected = engine.nextKey.value
+    engine.pressKey(expected === 'a' ? 's' : 'a')
+    engine.pressKey(expected)
+    const firstId = engine.clearEffect.value.id
+    expect(engine.clearEffect.value.kind).toBe('circle')
+
+    vi.advanceTimersByTime(AUTO_ADVANCE_MS)
+    engine.pressKey(engine.nextKey.value)
+    expect(engine.clearEffect.value).toMatchObject({ kind: 'thumbsUp' })
+    expect(engine.clearEffect.value.id).toBeGreaterThan(firstId)
+  })
+
+  it('feedbackEffects=falseではクリア演出を作らない', () => {
+    const { engine } = createEngine()
+    engine.updateSettings({ feedbackEffects: false })
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    expect(engine.clearEffect.value).toBeNull()
+  })
+
+  it('メニュー表示・終了・設定へ戻る・detachでクリア演出とタイマーを消す', () => {
+    const { engine } = createEngine()
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    expect(engine.clearEffect.value).not.toBeNull()
+    engine.openMenu()
+    expect(engine.clearEffect.value).toBeNull()
+
+    engine.closeMenu()
+    vi.advanceTimersByTime(AUTO_ADVANCE_MS)
+    engine.pressKey(engine.nextKey.value)
+    engine.finishRun({ endedBy: 'ended' })
+    expect(engine.clearEffect.value).toBeNull()
+
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    engine.abandonRun()
+    expect(engine.clearEffect.value).toBeNull()
+
+    engine.startRun()
+    engine.attach()
+    engine.pressKey(engine.nextKey.value)
+    engine.detach()
+    expect(engine.clearEffect.value).toBeNull()
+  })
+
+  it.each(['portrait', 'hidden'])('%s停止でクリア演出を消す', (reason) => {
+    const { engine } = createEngine()
+    engine.startRun()
+    engine.pressKey(engine.nextKey.value)
+    expect(engine.clearEffect.value).not.toBeNull()
+    engine.setPauseReason(reason, true)
+    expect(engine.clearEffect.value).toBeNull()
+  })
+
   it('メニュー中は問題のやり直しと全成績リセットも無視する', () => {
     const { engine } = createEngine()
     engine.updateSettings({ level: 2 })

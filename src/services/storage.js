@@ -18,6 +18,7 @@ export const defaultSettings = Object.freeze({
   mode: DEFAULT_PRACTICE_MODE,
   targetCount: DEFAULT_TARGET_COUNT,
   timeLimitSec: DEFAULT_TIME_LIMIT_SEC,
+  feedbackEffects: true,
 })
 
 export const defaultResults = Object.freeze({
@@ -42,6 +43,7 @@ function sanitizeSettings(settings = {}) {
     timeLimitSec: TIME_LIMIT_SECONDS.includes(source.timeLimitSec)
       ? source.timeLimitSec
       : DEFAULT_TIME_LIMIT_SEC,
+    feedbackEffects: source.feedbackEffects !== false,
   }
 }
 

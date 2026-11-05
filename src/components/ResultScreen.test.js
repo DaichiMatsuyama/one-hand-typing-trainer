@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { describe, expect, it } from 'vitest'
 import ResultScreen from './ResultScreen.vue'
 
@@ -10,7 +11,11 @@ function summary(overrides = {}) {
     analysis: {
       rank: 'A', rankVersion: 1,
       personalBest: { eligible: true, isFirst: false, isNewBest: true, reason: null },
-      nextRank: { targetRank: 'S', text: 'Sランクまで KPMあと20・ノーミス' },
+      nextRank: {
+        targetRank: 'S',
+        requirements: ['KPMあと20', 'ノーミス'],
+        text: 'Sランクまで KPMあと20・ノーミス',
+      },
       growth: { improvements: [{ type: 'accuracy', text: '正解率が前回より+3%' }] },
       weakKeys: [{ key: 'a', shown: 8, misses: 3, rate: 0.375 }],
       message: { id: 'best-1', text: '自己ベスト更新！一歩ずつ速くなっています。' },
@@ -25,18 +30,44 @@ describe('ResultScreen', () => {
     expect(wrapper.get('[data-testid="result-rank"]').text()).toBe('A')
     expect(wrapper.get('[data-testid="result-personal-best"]').text()).toBe('⭐ 自己ベスト更新')
     expect(wrapper.get('[data-testid="result-next-rank"]').text()).toContain('KPMあと20')
+    expect(wrapper.get('[data-testid="result-next-rank"]').attributes('aria-label'))
+      .toBe('Sランクまで KPMあと20・ノーミス')
+    expect(wrapper.findAll('.next-rank-chunk').map((chunk) => chunk.text()))
+      .toEqual(['Sランクまで', 'KPMあと20', 'ノーミス'])
+    expect(wrapper.get('.next-rank-chunks').attributes('aria-hidden')).toBe('true')
     expect(wrapper.get('[data-testid="result-growth"]').text()).toContain('正解率が前回より+3%')
     expect(wrapper.get('[data-testid="result-weak-keys"]').text()).toContain('ミス 3/8')
     expect(wrapper.get('[data-testid="result-message"]').attributes('aria-live')).toBe('polite')
-    expect(wrapper.get('.run-result-fixed').element.contains(wrapper.get('[data-testid="result-message"]').element)).toBe(true)
-    expect(wrapper.get('.run-result-content').element.contains(wrapper.get('[data-testid="result-message"]').element)).toBe(false)
+    expect(wrapper.get('.run-result-overview').element.contains(wrapper.get('[data-testid="result-message"]').element)).toBe(true)
+    expect(wrapper.get('.run-result-details').element.contains(wrapper.get('[data-testid="result-message"]').element)).toBe(false)
+    expect(wrapper.get('.run-result-details').element.contains(wrapper.get('.run-result-grid').element)).toBe(true)
+    expect(wrapper.get('.run-result-insights').element.contains(wrapper.get('[data-testid="result-growth"]').element)).toBe(true)
+    expect(wrapper.get('.run-result-actions').element.contains(wrapper.get('[data-testid="result-scroll-area"]').element)).toBe(false)
   })
 
   it('初回ベストは星付きで「初めての記録」と表示する', () => {
     const value = summary()
     value.analysis.personalBest = { eligible: true, isFirst: true, isNewBest: false, reason: null }
+    value.analysis.growth = { improvements: [] }
+    value.analysis.weakKeys = []
     const wrapper = mount(ResultScreen, { props: { summary: value } })
     expect(wrapper.get('[data-testid="result-personal-best"]').text()).toBe('⭐ 初めての記録')
+    expect(wrapper.find('[data-testid="result-growth"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="result-weak-keys"]').exists()).toBe(false)
+    expect(wrapper.get('.run-result-body').exists()).toBe(true)
+    expect(wrapper.get('.run-result-actions').exists()).toBe(true)
+  })
+
+  it('成長の数値と単位を分離しない', () => {
+    const value = summary()
+    value.analysis.growth = {
+      improvements: [{ type: 'kpm', text: '入力速度が前回より+264 KPM' }],
+    }
+    const wrapper = mount(ResultScreen, { props: { summary: value } })
+
+    expect(wrapper.get('[data-testid="result-growth"]').text())
+      .toContain('入力速度が前回より+264 KPM')
+    expect(wrapper.get('.number-unit').text()).toBe('+264 KPM')
   })
 
   it('フリーではランクと自己ベストを出さず、苦手キーとメッセージは表示する', () => {
@@ -85,14 +116,33 @@ describe('ResultScreen', () => {
   it.each([
     ['フリー', { mode: 'free', endedBy: 'ended', targetCount: null }],
     ['競技の途中終了', { mode: 'timeLimit', endedBy: 'ended', targetCount: null, timeLimitSec: 60 }],
-  ])('%sでも応援メッセージを固定部分へ表示する', (_label, overrides) => {
+  ])('%sでも応援メッセージを左カラムへ表示する', (_label, overrides) => {
     const value = summary(overrides)
     value.analysis.rank = null
     value.analysis.personalBest = null
     const wrapper = mount(ResultScreen, { props: { summary: value } })
     const message = wrapper.get('[data-testid="result-message"]').element
 
-    expect(wrapper.get('.run-result-fixed').element.contains(message)).toBe(true)
-    expect(wrapper.get('.run-result-content').element.contains(message)).toBe(false)
+    expect(wrapper.get('.run-result-overview').element.contains(message)).toBe(true)
+    expect(wrapper.get('.run-result-details').element.contains(message)).toBe(false)
+  })
+
+  it('本文があふれた間だけ下端フェードの継続合図を有効にし、末尾で消す', async () => {
+    const wrapper = mount(ResultScreen, { props: { summary: summary() } })
+    const area = wrapper.get('[data-testid="result-scroll-area"]')
+    Object.defineProperties(area.element, {
+      scrollHeight: { configurable: true, value: 420 },
+      clientHeight: { configurable: true, value: 200 },
+    })
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+
+    expect(wrapper.get('.run-result-scroll-frame').classes()).toContain('has-overflow')
+    expect(wrapper.get('.run-result-scroll-frame').classes()).not.toContain('at-scroll-end')
+    expect(wrapper.get('[data-testid="result-scroll-cue"]').text()).toBe('▼')
+
+    area.element.scrollTop = 220
+    await area.trigger('scroll')
+    expect(wrapper.get('.run-result-scroll-frame').classes()).toContain('at-scroll-end')
   })
 })

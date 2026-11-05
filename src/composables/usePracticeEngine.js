@@ -36,6 +36,7 @@ import {
 const SNAPSHOT_INTERVAL_MS = 5000
 const ENVIRONMENT_SYNC_INTERVAL_MS = 1000
 const RESET_NOTICE_MS = 2000
+const CLEAR_EFFECT_MS = 550
 const MAX_WRONG_KEYS = 50
 const PORTRAIT_QUERY = '(orientation: portrait) and (max-width: 700px)'
 const QUESTION_SETTING_KEYS = new Set(['hand', 'level', 'includeSymbols', 'layoutVariant'])
@@ -95,6 +96,7 @@ export function usePracticeEngine({
   const session = ref(initialState.session)
   const now = ref(initialTimestamp)
   const resetNotice = ref('')
+  const clearEffect = ref(null)
   const wrongKeys = ref([])
   const run = ref(null)
   const resultReady = ref(false)
@@ -153,12 +155,14 @@ export function usePracticeEngine({
   let clockTimer
   let maintenanceTimer
   let feedbackTimer
+  let clearEffectTimer
   let autoAdvanceTimer
   let resultTimer
   let noticeTimer
   let lastSnapshotAt = initialTimestamp
   let attached = false
   let shownPositions = new Set()
+  let clearEffectId = 0
   // 入力ゼロの結果は履歴に残らないため、画面へ出したメッセージはエンジン内でも引き継ぐ。
   let lastDisplayedMessageId = loadHistory(storage)[0]?.messageId ?? null
 
@@ -204,6 +208,9 @@ export function usePracticeEngine({
     changes.forEach(([name, on]) => {
       if (typeof name !== 'string' || name.length === 0) return
       if (on && !pauseReasons.has(name)) {
+        if (name === 'menu' || name === 'portrait' || name === 'hidden') {
+          clearCompletionEffect()
+        }
         pauseReasons.add(name)
         changed = true
       } else if (!on && pauseReasons.delete(name)) {
@@ -265,12 +272,33 @@ export function usePracticeEngine({
     resultTimer = undefined
   }
 
+  function clearCompletionEffect() {
+    clearTimeout(clearEffectTimer)
+    clearEffectTimer = undefined
+    clearEffect.value = null
+  }
+
+  function showCompletionEffect() {
+    clearCompletionEffect()
+    if (!settings.value.feedbackEffects) return
+    clearEffectId += 1
+    clearEffect.value = {
+      id: clearEffectId,
+      kind: session.value.mistakes === 0 ? 'thumbsUp' : 'circle',
+    }
+    clearEffectTimer = setTimeout(() => {
+      clearEffectTimer = undefined
+      clearEffect.value = null
+    }, CLEAR_EFFECT_MS)
+  }
+
   function beginQuestion(savedSession = null, timestamp = getNow()) {
     wrongKeys.value = []
     shownPositions = new Set()
     cancelAutoAdvance()
     clearTimeout(feedbackTimer)
     feedbackTimer = undefined
+    clearCompletionEffect()
     now.value = timestamp
     session.value = savedSession
       ? restorePracticeSession(savedSession, currentQuestion.value, timestamp)
@@ -332,6 +360,7 @@ export function usePracticeEngine({
       QUESTION_SETTING_KEYS.has(key) && partial[key] !== settings.value[key]
     ))
     settings.value = { ...settings.value, ...partial }
+    clearCompletionEffect()
     if (resetsQuestion) questionIndex.value = 0
     now.value = timestamp
     if (resetsQuestion || session.value.question !== currentQuestion.value) {
@@ -349,6 +378,7 @@ export function usePracticeEngine({
     setPauseReason('menu', false, timestamp)
     cancelResultTransition()
     resultReady.value = false
+    clearCompletionEffect()
     // 前回のrunで最後に完了した問題(自動で次へ進む前に終わった問題)から、続けて始めない。
     if (session.value.isComplete) questionIndex.value += 1
     const clockStarted = settings.value.mode === 'free'
@@ -431,8 +461,14 @@ export function usePracticeEngine({
   }
 
   // 結果確定・途中問題の移管・履歴保存を同じ時刻で一度だけ行う。
-  function finishRun({ endedBy = 'ended', timestamp = getNow(), activeMs: fixedActiveMs } = {}) {
+  function finishRun({
+    endedBy = 'ended',
+    timestamp = getNow(),
+    activeMs: fixedActiveMs,
+    keepClearEffect = false,
+  } = {}) {
     if (!run.value) return runSummary.value
+    if (!keepClearEffect) clearCompletionEffect()
     now.value = timestamp
     if (!run.value.summary) {
       const activeMs = fixedActiveMs ?? getRunActiveMs(timestamp)
@@ -487,6 +523,7 @@ export function usePracticeEngine({
     updatePauseReasons([...pauseReasons].map((reason) => [reason, false]), timestamp)
     cancelResultTransition()
     resultReady.value = false
+    clearCompletionEffect()
     snapshot(timestamp)
   }
 
@@ -494,6 +531,7 @@ export function usePracticeEngine({
     if (pauseReasons.has('menu') || run.value?.summary) return false
     const timestamp = getNow()
     if (expireTimeLimit(timestamp)) return false
+    clearCompletionEffect()
     cancelAutoAdvance()
     if (run.value) {
       run.value = { ...run.value, menuOpenCount: run.value.menuOpenCount + 1 }
@@ -573,6 +611,7 @@ export function usePracticeEngine({
     now.value = timestamp
 
     if (!wasComplete && session.value.isComplete) {
+      showCompletionEffect()
       reportCompletion()
       results.value = {
         completedQuestions: results.value.completedQuestions + 1,
@@ -583,7 +622,7 @@ export function usePracticeEngine({
       }
       if (run.value?.mode === 'timeAttack'
         && runSummary.value.completedQuestions >= run.value.targetCount) {
-        finishRun({ endedBy: 'completed', timestamp })
+        finishRun({ endedBy: 'completed', timestamp, keepClearEffect: true })
         cancelResultTransition()
         resultTimer = setTimeout(() => {
           resultTimer = undefined
@@ -680,6 +719,7 @@ export function usePracticeEngine({
   }
 
   function detach() {
+    clearCompletionEffect()
     if (!attached) return
     attached = false
     clearInterval(clockTimer)
@@ -704,6 +744,7 @@ export function usePracticeEngine({
     session,
     now,
     resetNotice,
+    clearEffect,
     wrongKeys,
     run,
     resultReady,

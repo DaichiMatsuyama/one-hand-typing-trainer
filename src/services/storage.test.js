@@ -22,7 +22,7 @@ describe('storage', () => {
     const state = {
       settings: {
         hand: 'right', level: 3, includeSymbols: true, layoutVariant: 'us',
-        mode: 'timeAttack', targetCount: 30, timeLimitSec: 120,
+        mode: 'timeAttack', targetCount: 30, timeLimitSec: 120, feedbackEffects: false,
       },
       results: { completedQuestions: 2, correctCount: 10, mistakes: 3, attempts: 13, practiceMs: 9000 },
       questionIndex: 4,
@@ -87,7 +87,7 @@ describe('storage', () => {
       version: STORAGE_VERSION,
       settings: {
         hand: 'left', level: 1, includeSymbols: false, layoutVariant: 'jis',
-        mode: 'free', targetCount: 10, timeLimitSec: 60,
+        mode: 'free', targetCount: 10, timeLimitSec: 60, feedbackEffects: true,
       },
       results: { completedQuestions: 0, correctCount: 0, mistakes: 0, attempts: 0, practiceMs: 0 },
       questionIndex: 0,
@@ -107,5 +107,19 @@ describe('storage', () => {
       targetCount: 10,
       timeLimitSec: 60,
     })
+  })
+
+  it.each([
+    ['欠落', undefined, true],
+    ['true', true, true],
+    ['false', false, false],
+    ['不正な値', 'false', true],
+  ])('feedbackEffectsが%sなら%sへ正規化する', (_label, feedbackEffects, expected) => {
+    const storage = memoryStorage()
+    storage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
+      settings: { feedbackEffects },
+    }))
+    expect(loadAppState(storage).settings.feedbackEffects).toBe(expected)
   })
 })

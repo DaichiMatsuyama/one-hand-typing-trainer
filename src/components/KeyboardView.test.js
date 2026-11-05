@@ -354,4 +354,25 @@ describe('KeyboardView', () => {
       expect(event.defaultPrevented).toBe(true)
     }
   })
+
+  it.each([
+    ['thumbsUp', '👍'],
+    ['circle', '◯'],
+  ])('%sのクリア演出を入力を妨げないオーバーレイとして表示する', (kind, mark) => {
+    mountKeyboard({ clearEffect: { id: 1, kind }, feedbackEffects: true })
+
+    const effect = wrapper.get('[data-testid="keyboard-clear-effect"]')
+    expect(effect.text()).toBe(mark)
+    expect(effect.attributes('aria-hidden')).toBe('true')
+    expect(effect.classes()).toContain('keyboard-clear-effect')
+    expect(effect.classes()).toContain(`is-${kind}`)
+  })
+
+  it('feedbackEffects=falseならクリア演出を表示しない', () => {
+    mountKeyboard({
+      clearEffect: { id: 1, kind: 'thumbsUp' },
+      feedbackEffects: false,
+    })
+    expect(wrapper.find('[data-testid="keyboard-clear-effect"]').exists()).toBe(false)
+  })
 })

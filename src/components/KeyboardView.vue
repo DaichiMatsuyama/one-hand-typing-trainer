@@ -11,6 +11,8 @@ const props = defineProps({
   layout: { type: Object, required: true },
   nextKey: { type: String, default: '' },
   feedback: { type: Object, default: null },
+  clearEffect: { type: Object, default: null },
+  feedbackEffects: { type: Boolean, default: true },
   disabled: { type: Boolean, default: false },
 })
 
@@ -226,6 +228,15 @@ onBeforeUnmount(() => {
             {{ finger.label }}
           </span>
         </div>
+
+        <div
+          v-if="feedbackEffects && clearEffect"
+          :key="clearEffect.id"
+          class="keyboard-clear-effect"
+          :class="`is-${clearEffect.kind}`"
+          data-testid="keyboard-clear-effect"
+          aria-hidden="true"
+        >{{ clearEffect.kind === 'thumbsUp' ? '👍' : '◯' }}</div>
       </div>
 
       <div v-if="layout.hand === 'left'" class="finger-legend" aria-label="指の色分け凡例">
