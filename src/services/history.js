@@ -1,5 +1,6 @@
 import { PRACTICE_MODES } from '../appConfig.js'
 import { sanitizeKeyStats } from '../domain/keyStats.js'
+import { MAX_RETURN_MS } from '../domain/homePosition.js'
 import { createDeviceId } from './access.js'
 
 export const HISTORY_KEY = 'one-hand-typing-trainer:history:v1'
@@ -10,6 +11,13 @@ const ENDED_BY = ['completed', 'timeUp', 'ended']
 
 function nonNegativeInteger(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+const MAX_HP_COUNT = 100_000
+
+// 古い記録(ホームポジション項目なし)や壊れた値は、記録自体を捨てずnull(不明)として読む。
+function boundedInteger(value, max) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= max ? value : null
 }
 
 function sanitizeRecord(record) {
@@ -55,10 +63,14 @@ function sanitizeRecord(record) {
     layout: record.layout,
     targetCount,
     timeLimitSec,
-    homePosition: false,
+    homePosition: record.homePosition === true,
     endedBy: record.endedBy,
     ...integers,
     kpm,
+    hpSuccessCount: boundedInteger(record.hpSuccessCount, MAX_HP_COUNT),
+    hpSkipCount: boundedInteger(record.hpSkipCount, MAX_HP_COUNT),
+    hpAvgReturnMs: boundedInteger(record.hpAvgReturnMs, MAX_RETURN_MS),
+    hpMinReturnMs: boundedInteger(record.hpMinReturnMs, MAX_RETURN_MS),
     ...(hasKeys ? { keys } : {}),
     rankVersion,
     messageId,

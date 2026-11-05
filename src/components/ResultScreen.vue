@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { formatReturnSeconds } from '../domain/homePosition.js'
 import { formatClearTime } from '../domain/run.js'
 import { formatDuration } from '../domain/stats.js'
 
@@ -56,11 +57,22 @@ const showRankUnavailable = computed(() => (
     && props.summary.endedBy !== 'ended'
     && analysis.value.rank === null
 ))
+// ホームポジション確認をONで走ったrunだけ、成績の小さなカードを左カラムの末尾へ出す。
+const showHomePosition = computed(() => props.summary.homePosition === true)
+const homePositionItems = computed(() => [
+  { key: 'success', label: '成功', value: `${props.summary.hpSuccessCount ?? 0}回` },
+  { key: 'skip', label: 'スキップ', value: `${props.summary.hpSkipCount ?? 0}回` },
+  { key: 'avg', label: '平均復帰', value: formatReturnSeconds(props.summary.hpAvgReturnMs) },
+  { key: 'min', label: '最短', value: formatReturnSeconds(props.summary.hpMinReturnMs) },
+])
 const contentDensity = computed(() => {
   const hasGrowth = Boolean(analysis.value.growth?.improvements?.length)
   const hasWeakKeys = Boolean(analysis.value.weakKeys?.length)
-  if (hasGrowth && hasWeakKeys) return 'full'
-  if (hasGrowth || hasWeakKeys) return 'medium'
+  // 成績カードの分だけ左カラムが高くなるため、文字と余白は一段階小さい構成にそろえる。
+  const extra = showHomePosition.value ? 1 : 0
+  const level = (hasGrowth && hasWeakKeys ? 2 : hasGrowth || hasWeakKeys ? 1 : 0) + extra
+  if (level >= 2) return 'full'
+  if (level === 1) return 'medium'
   return 'sparse'
 })
 const bestLabel = computed(() => {
@@ -155,7 +167,7 @@ function growthTextParts(text) {
           <div
             ref="scrollContent"
             class="run-result-body"
-            :class="`is-${contentDensity}-content`"
+            :class="[`is-${contentDensity}-content`, { 'has-home-position': showHomePosition }]"
           >
             <div class="run-result-overview">
               <p v-if="endedEarly" class="ended-early" data-testid="result-ended-early">途中終了</p>
@@ -213,6 +225,21 @@ function growthTextParts(text) {
                 :key="index"
                 :class="{ 'kinsoku-tail': part.tail }"
               >{{ part.text }}</span></p>
+
+              <section
+                v-if="showHomePosition"
+                class="home-position-summary"
+                aria-labelledby="home-position-heading"
+                data-testid="result-home-position"
+              >
+                <h2 id="home-position-heading">ホームポジション確認</h2>
+                <dl>
+                  <div v-for="item in homePositionItems" :key="item.key">
+                    <dt>{{ item.label }}</dt>
+                    <dd :data-testid="`result-hp-${item.key}`">{{ item.value }}</dd>
+                  </div>
+                </dl>
+              </section>
             </div>
 
             <div class="run-result-details">

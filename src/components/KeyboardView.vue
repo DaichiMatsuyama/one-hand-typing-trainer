@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue'
 import { FINGERS, getFinger, getKeySpokenName } from '../data/keyboardLayouts.js'
 
 const CLICK_SUPPRESSION_MS = 1000
@@ -12,22 +12,36 @@ const props = defineProps({
   nextKey: { type: String, default: '' },
   feedback: { type: Object, default: null },
   disabled: { type: Boolean, default: false },
+  // ホームポジション確認中だけ渡す: { id, keys, established }。keysは対象の4キー。
+  homePosition: { type: Object, default: null },
+  // メニュー表示・縦向き・非表示などで停止中は、確認の接触を追跡しない。
+  homePositionPaused: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['press'])
+const emit = defineEmits(['press', 'home-established', 'home-released', 'home-reset'])
 const panel = ref(null)
 const clickSuppressions = new Map()
 const pointerTargets = new Map()
+// ホームポジション確認: pointerIdごとに、対象4キーの上で始まった接触を追跡する。
+const homeContacts = new Map()
+// 成立した時点で、成立に使った接触(対象キーごとに最初の1本)のpointerId。成立前はnull。
+let homeUsedPointers = null
 
 const legend = computed(() => {
   const ids = [...new Set(props.layout.rows.flatMap((row) => row.keys.map((item) => item.finger)))]
   return ids.map((id) => FINGERS[id])
 })
 
+const homeTargetKeys = computed(() => new Set(props.homePosition?.keys ?? []))
+const homeEstablished = computed(() => Boolean(props.homePosition?.established))
+
 function keyClass(item) {
+  const isHomeTarget = homeTargetKeys.value.has(item.value)
   return {
     [`finger-${item.finger}`]: true,
     'is-disabled': props.disabled,
+    'home-target': isHomeTarget,
+    'home-confirmed': isHomeTarget && homeEstablished.value,
     expected: item.value === props.nextKey && !props.disabled,
     correct: props.feedback?.type === 'correct' && props.feedback?.key === item.value,
     incorrect: props.feedback?.type === 'incorrect' && props.feedback?.key === item.value,
@@ -55,12 +69,73 @@ function removePointerMark(mark) {
   if (suppression.pendingClicks.length === 0) clickSuppressions.delete(mark.element)
 }
 
+function resetHomeTracking() {
+  homeContacts.clear()
+  homeUsedPointers = null
+}
+
+// blur/pagehideなどで接触を捨てるとき。成立済みなら、画面外の指の状態が分からなくなるため、
+// エンジンの成立状態も未成立へ戻す(置き直すまで成功にならない)。
+function discardHomeContacts() {
+  const wasEstablished = homeUsedPointers !== null
+  resetHomeTracking()
+  if (wasEstablished) emit('home-reset')
+}
+
+function isHomeCheckTracking() {
+  return Boolean(props.homePosition) && !props.homePositionPaused
+}
+
+// 対象の4キーそれぞれに1本以上の接触が同時にあれば成立。順番に置いてよく、
+// 対象外のキー・余分な接触・同じキーの重複は成立の邪魔にも入力ミスにもしない。
+function trackHomeContact(event, item) {
+  if (!isHomeCheckTracking()) return
+  const targets = props.homePosition.keys
+  if (!targets.includes(item.value)) return
+  // pointerIdが再利用された場合は、新しい接触として数え直す。
+  homeContacts.delete(event.pointerId)
+  homeContacts.set(event.pointerId, item.value)
+  if (homeUsedPointers) return
+
+  const firstPointerByKey = new Map()
+  for (const [pointerId, key] of homeContacts) {
+    if (!firstPointerByKey.has(key)) firstPointerByKey.set(key, pointerId)
+  }
+  if (targets.every((key) => firstPointerByKey.has(key))) {
+    homeUsedPointers = new Set(firstPointerByKey.values())
+    emit('home-established')
+  }
+}
+
+// 離れた接触を外す。成立後に、成立に使った接触が離れたら成功を通知する。
+// pointercancelも「離れた」として同じに扱う。成立前に離れた場合は外すだけ。
+function releaseHomeContact(event) {
+  if (!homeContacts.has(event.pointerId)) return
+  homeContacts.delete(event.pointerId)
+  if (!homeUsedPointers?.has(event.pointerId)) return
+  homeUsedPointers = null
+  emit('home-released')
+}
+
+// 確認の開始・終了・次の確認・停止の切り替えで、追跡中の接触をすべて捨てる。
+// 成立(establishedの変化)ではオブジェクトが入れ替わるだけなので、idと停止の値そのものを監視する。
+watch(
+  [() => props.homePosition?.id ?? null, () => props.homePositionPaused],
+  resetHomeTracking,
+  { flush: 'sync' },
+)
+
 function clearPointerState() {
   for (const suppression of clickSuppressions.values()) {
     for (const mark of [...suppression.pendingClicks]) removePointerMark(mark)
   }
   clickSuppressions.clear()
   pointerTargets.clear()
+}
+
+function handleWindowLoss() {
+  discardHomeContacts()
+  clearPointerState()
 }
 
 function pruneDetachedMarks() {
@@ -86,6 +161,8 @@ function handlePointerDown(event, item) {
   const previousMark = pointerTargets.get(event.pointerId)
   if (previousMark) removePointerMark(previousMark)
   if (event.button !== 0) return
+
+  trackHomeContact(event, item)
 
   const element = event.currentTarget
   let suppression = clickSuppressions.get(element)
@@ -114,6 +191,7 @@ function handlePointerDown(event, item) {
 }
 
 function handlePointerFinish(event) {
+  releaseHomeContact(event)
   const mark = pointerTargets.get(event.pointerId)
   if (!mark || mark.finished) return
   mark.finished = true
@@ -159,8 +237,8 @@ function preventKeyboardGesture(event) {
 onMounted(() => {
   document.addEventListener('pointerup', handlePointerFinish)
   document.addEventListener('pointercancel', handlePointerFinish)
-  window.addEventListener('pagehide', clearPointerState)
-  window.addEventListener('blur', clearPointerState)
+  window.addEventListener('pagehide', handleWindowLoss)
+  window.addEventListener('blur', handleWindowLoss)
   panel.value?.addEventListener('gesturestart', preventKeyboardGesture, { passive: false })
   panel.value?.addEventListener('gesturechange', preventKeyboardGesture, { passive: false })
 })
@@ -170,10 +248,11 @@ onUpdated(pruneDetachedMarks)
 onBeforeUnmount(() => {
   document.removeEventListener('pointerup', handlePointerFinish)
   document.removeEventListener('pointercancel', handlePointerFinish)
-  window.removeEventListener('pagehide', clearPointerState)
-  window.removeEventListener('blur', clearPointerState)
+  window.removeEventListener('pagehide', handleWindowLoss)
+  window.removeEventListener('blur', handleWindowLoss)
   panel.value?.removeEventListener('gesturestart', preventKeyboardGesture, { passive: false })
   panel.value?.removeEventListener('gesturechange', preventKeyboardGesture, { passive: false })
+  resetHomeTracking()
   clearPointerState()
 })
 </script>
@@ -182,7 +261,7 @@ onBeforeUnmount(() => {
   <section
     ref="panel"
     class="keyboard-panel"
-    :class="{ complete: disabled }"
+    :class="{ complete: disabled && !homePosition, 'home-check': Boolean(homePosition) }"
     :data-hand="layout.hand"
     :aria-label="`${layout.label}のキーボード`"
     @contextmenu.prevent
@@ -213,6 +292,11 @@ onBeforeUnmount(() => {
             <span class="key-character">{{ item.value }}</span>
             <span class="finger-label" aria-hidden="true">{{ getFinger(item.finger).shortLabel }}</span>
             <span v-if="item.isHome" class="home-bump" aria-hidden="true"></span>
+            <span
+              v-if="homeEstablished && homeTargetKeys.has(item.value)"
+              class="home-check-mark"
+              aria-hidden="true"
+            >✓</span>
           </button>
         </div>
 

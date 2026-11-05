@@ -19,12 +19,16 @@ var HEADERS = [
 ];
 var MAX_RECORDS_PER_REQUEST = 50;
 var RUN_SHEET_NAME = 'runs';
+// ホームポジション確認の4列は末尾へ追加した(既存の24列の並びは変えない)。
 var RUN_HEADERS = [
   'receivedAt', 'id', 'ts', 'deviceId', 'mode', 'hand', 'level', 'includeSymbols',
   'layout', 'targetCount', 'timeLimitSec', 'homePosition', 'endedBy', 'activeMs',
   'inputMs', 'completedQuestions', 'correctCount', 'mistakes', 'attempts', 'accuracy',
   'kpm', 'menuOpenCount', 'rankVersion', 'appVersion',
+  'hpSuccessCount', 'hpSkipCount', 'hpAvgReturnMs', 'hpMinReturnMs',
 ];
+// ホームポジション列を追加する前の旧ヘッダー(24列)。1行目がこれと完全一致するときだけ、新4列を追記して移行する。
+var LEGACY_RUN_HEADER_COUNT = 24;
 var MAX_RUNS_PER_REQUEST = 20;
 // 間違ったコードが短時間に続いたら、確認を一時的に止める(総当たり対策)
 var MAX_FAILS = 30;
@@ -134,6 +138,7 @@ function handleLog_(body) {
       if (rows.length > 0) {
         sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, HEADERS.length).setValues(rows);
       }
+      SpreadsheetApp.flush();
     } finally {
       lock.releaseLock();
     }
@@ -190,11 +195,14 @@ function handleRunLog_(body) {
           record.activeMs, record.inputMs, record.completedQuestions, record.correctCount,
           record.mistakes, record.attempts, record.accuracy, record.kpm,
           record.menuOpenCount, record.rankVersion, text_(record.appVersion, 40),
+          record.hpSuccessCount, record.hpSkipCount, record.hpAvgReturnMs, record.hpMinReturnMs,
         ]);
       });
       if (rows.length > 0) {
         sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, RUN_HEADERS.length).setValues(rows);
       }
+      // ヘッダー移行・追記の反映を、ロックを手放す前に確定する(次のリクエストが古い状態を読まないように)。
+      SpreadsheetApp.flush();
     } finally {
       lock.releaseLock();
     }
@@ -303,6 +311,8 @@ function normalizeRunRecord_(record) {
   if (!isIntegerInRange_(record.menuOpenCount, 0, 1000)) return null;
   if (record.rankVersion !== undefined && record.rankVersion !== null
     && !isIntegerInRange_(record.rankVersion, 0, 999)) return null;
+  var homePositionStats = normalizeHomePositionStats_(record);
+  if (!homePositionStats) return null;
 
   return {
     id: record.id,
@@ -328,6 +338,49 @@ function normalizeRunRecord_(record) {
     rankVersion: record.rankVersion === undefined || record.rankVersion === null ? '' : record.rankVersion,
     appVersion: typeof record.appVersion === 'string' && APP_VERSION_PATTERN.test(record.appVersion)
       ? record.appVersion : 'unknown',
+    hpSuccessCount: homePositionStats.hpSuccessCount,
+    hpSkipCount: homePositionStats.hpSkipCount,
+    hpAvgReturnMs: homePositionStats.hpAvgReturnMs,
+    hpMinReturnMs: homePositionStats.hpMinReturnMs,
+  };
+}
+
+// ホームポジション確認の4項目。旧クライアントの記録(省略)も受理し、省略・nullは空欄で保存する。
+// 値があるときは範囲と整合(OFFなら回数0・時間なし / 成功0なら時間なし / 最短 <= 平均)を確認する。
+// 確認ありのrunは4項目が必須で、成功+スキップ <= 完了問題数、平均 <= 総経過時間なども確認する。
+function normalizeHomePositionStats_(record) {
+  var strict = record.homePosition === true;
+  var fields = ['hpSuccessCount', 'hpSkipCount', 'hpAvgReturnMs', 'hpMinReturnMs'];
+  var values = {};
+  for (var i = 0; i < fields.length; i++) {
+    var value = record[fields[i]];
+    values[fields[i]] = value === undefined || value === null ? null : value;
+  }
+  var success = values.hpSuccessCount;
+  var skip = values.hpSkipCount;
+  var avg = values.hpAvgReturnMs;
+  var min = values.hpMinReturnMs;
+  if (success !== null && !isIntegerInRange_(success, 0, 100000)) return null;
+  if (skip !== null && !isIntegerInRange_(skip, 0, 100000)) return null;
+  if (avg !== null && !isIntegerInRange_(avg, 0, 86400000)) return null;
+  if (min !== null && !isIntegerInRange_(min, 0, 86400000)) return null;
+  if (record.homePosition === false
+    && ((success !== null && success > 0) || (skip !== null && skip > 0)
+      || avg !== null || min !== null)) return null;
+  if (success === 0 && (avg !== null || min !== null)) return null;
+  if (avg !== null && min !== null && min > avg) return null;
+  if (strict) {
+    // 確認ありのrunは、回数と時間が互いに矛盾しない完全な組で送られる。
+    if (success === null || skip === null) return null;
+    if (success > 0 && (avg === null || min === null)) return null;
+    if (success + skip > record.completedQuestions) return null;
+    if (avg !== null && (avg > record.activeMs || avg * success > record.activeMs + 1000)) return null;
+  }
+  return {
+    hpSuccessCount: success === null ? '' : success,
+    hpSkipCount: skip === null ? '' : skip,
+    hpAvgReturnMs: avg === null ? '' : avg,
+    hpMinReturnMs: min === null ? '' : min,
   };
 }
 
@@ -378,16 +431,39 @@ function getSheet_(sheetName, headers, validateHeaders) {
   var spreadsheet = sheetId ? SpreadsheetApp.openById(sheetId) : SpreadsheetApp.getActiveSpreadsheet();
   var sheet = spreadsheet.getSheetByName(sheetName) || spreadsheet.insertSheet(sheetName);
   if (sheet.getLastRow() === 0) {
+    ensureColumns_(sheet, headers.length);
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     sheet.setFrozenRows(1);
   } else if (validateHeaders) {
-    if (sheet.getLastColumn() !== headers.length) return null;
-    var actualHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-    for (var i = 0; i < headers.length; i++) {
-      if (actualHeaders[i] !== headers[i]) return null;
-    }
+    if (!validateOrMigrateHeaders_(sheet, headers)) return null;
   }
   return sheet;
+}
+
+// シートの列数(グリッド)が足りないと、範囲外への書き込みが例外になる。必要な列数まで足す。
+function ensureColumns_(sheet, count) {
+  var maxColumns = sheet.getMaxColumns();
+  if (maxColumns < count) sheet.insertColumnsAfter(maxColumns, count - maxColumns);
+}
+
+// 1行目が新ヘッダーと完全一致ならそのまま使う。旧ヘッダー(新ヘッダーの先頭24列)と完全一致なら、
+// 新しい列の見出しだけを1行目の右へ追記して使う(既存のデータ行は触らない。新列は空欄のまま)。
+// 呼び出し元がロックを取っている間に実行すること(移行の二重実行を防ぐ)。
+function validateOrMigrateHeaders_(sheet, headers) {
+  var lastColumn = sheet.getLastColumn();
+  var legacyCount = LEGACY_RUN_HEADER_COUNT;
+  if (lastColumn !== headers.length && lastColumn !== legacyCount) return false;
+  var actualHeaders = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  for (var i = 0; i < lastColumn; i++) {
+    if (actualHeaders[i] !== headers[i]) return false;
+  }
+  if (lastColumn === legacyCount) {
+    // 新規作成のシートは既定で26列。24列ちょうどのシートも含め、足りない列を先に足す。
+    ensureColumns_(sheet, headers.length);
+    var added = headers.slice(legacyCount);
+    sheet.getRange(1, legacyCount + 1, 1, added.length).setValues([added]);
+  }
+  return true;
 }
 
 // 文字列として保存する。先頭が = + - @ のセルは数式として解釈されないよう ' を付ける

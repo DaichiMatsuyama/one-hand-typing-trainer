@@ -23,6 +23,7 @@ describe('storage', () => {
       settings: {
         hand: 'right', level: 3, includeSymbols: true, layoutVariant: 'us',
         mode: 'timeAttack', targetCount: 30, timeLimitSec: 120, feedbackEffects: false,
+        homePosition: true,
       },
       results: { completedQuestions: 2, correctCount: 10, mistakes: 3, attempts: 13, practiceMs: 9000 },
       questionIndex: 4,
@@ -88,6 +89,7 @@ describe('storage', () => {
       settings: {
         hand: 'left', level: 1, includeSymbols: false, layoutVariant: 'jis',
         mode: 'free', targetCount: 10, timeLimitSec: 60, feedbackEffects: true,
+        homePosition: false,
       },
       results: { completedQuestions: 0, correctCount: 0, mistakes: 0, attempts: 0, practiceMs: 0 },
       questionIndex: 0,
@@ -121,5 +123,30 @@ describe('storage', () => {
       settings: { feedbackEffects },
     }))
     expect(loadAppState(storage).settings.feedbackEffects).toBe(expected)
+  })
+
+  it.each([
+    ['欠落', undefined, false],
+    ['true', true, true],
+    ['false', false, false],
+    ['文字列のtrue', 'true', false],
+    ['数値の1', 1, false],
+    ['null', null, false],
+  ])('homePositionが%sなら%sへ正規化する(既定はOFF)', (_label, homePosition, expected) => {
+    const storage = memoryStorage()
+    storage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
+      settings: { homePosition },
+    }))
+    expect(loadAppState(storage).settings.homePosition).toBe(expected)
+  })
+
+  it('homePositionは練習モード・手・レベルの設定と独立して保存・復元される', () => {
+    const storage = memoryStorage()
+    for (const mode of ['free', 'timeAttack', 'timeLimit']) {
+      const settings = { hand: 'right', level: 3, mode, homePosition: true }
+      saveAppState({ settings, results: {}, questionIndex: 0, session: null }, storage)
+      expect(loadAppState(storage).settings).toMatchObject({ mode, hand: 'right', level: 3, homePosition: true })
+    }
   })
 })

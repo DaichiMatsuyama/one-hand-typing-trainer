@@ -79,6 +79,22 @@ describe('remoteSync', () => {
     expect(loadRunOutbox(storage)).toEqual([])
   })
 
+  it('ホームポジション確認の項目を欠かさずlog_runの本文に載せる', async () => {
+    const { sync, fetchImpl } = setup()
+    const record = {
+      ...runRec('run-hp'),
+      homePosition: true,
+      hpSuccessCount: 9,
+      hpSkipCount: 1,
+      hpAvgReturnMs: 1200,
+      hpMinReturnMs: 800,
+    }
+    await sync.recordRun(record)
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).records[0]).toMatchObject({
+      homePosition: true, hpSuccessCount: 9, hpSkipCount: 1, hpAvgReturnMs: 1200, hpMinReturnMs: 800,
+    })
+  })
+
   it('runの通信失敗では第2キューに残し、次の契機で再送する', async () => {
     const fetchImpl = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue(ok())
     const { sync, storage } = setup({ fetchImpl })

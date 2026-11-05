@@ -214,4 +214,134 @@ describe('ResultScreen', () => {
     await area.trigger('scroll')
     expect(wrapper.get('.run-result-scroll-frame').classes()).toContain('at-scroll-end')
   })
+
+  describe('ホームポジション確認の成績', () => {
+    const withHomePosition = (overrides = {}) => summary({
+      homePosition: true,
+      hpSuccessCount: 12,
+      hpSkipCount: 1,
+      hpAvgReturnMs: 1234,
+      hpMinReturnMs: 800,
+      ...overrides,
+    })
+
+    it('確認ONのrunでは成功・スキップ・平均復帰・最短を小数1桁の秒で表示する', () => {
+      const wrapper = mount(ResultScreen, { props: { summary: withHomePosition() } })
+      const card = wrapper.get('[data-testid="result-home-position"]')
+      expect(card.get('h2').text()).toBe('ホームポジション確認')
+      expect(card.get('[data-testid="result-hp-success"]').text()).toBe('12回')
+      expect(card.get('[data-testid="result-hp-skip"]').text()).toBe('1回')
+      expect(card.get('[data-testid="result-hp-avg"]').text()).toBe('1.2秒')
+      expect(card.get('[data-testid="result-hp-min"]').text()).toBe('0.8秒')
+      expect(card.findAll('dt').map((item) => item.text())).toEqual(['成功', 'スキップ', '平均復帰', '最短'])
+      expect(card.attributes('aria-labelledby')).toBe('home-position-heading')
+    })
+
+    it('成功が0回なら平均・最短は「-」にする', () => {
+      const wrapper = mount(ResultScreen, {
+        props: {
+          summary: withHomePosition({
+            hpSuccessCount: 0, hpSkipCount: 4, hpAvgReturnMs: null, hpMinReturnMs: null,
+          }),
+        },
+      })
+      expect(wrapper.get('[data-testid="result-hp-success"]').text()).toBe('0回')
+      expect(wrapper.get('[data-testid="result-hp-skip"]').text()).toBe('4回')
+      expect(wrapper.get('[data-testid="result-hp-avg"]').text()).toBe('-')
+      expect(wrapper.get('[data-testid="result-hp-min"]').text()).toBe('-')
+    })
+
+    it('確認の回数がまだ0回でもONのrunなら表示する', () => {
+      const wrapper = mount(ResultScreen, {
+        props: {
+          summary: withHomePosition({
+            hpSuccessCount: 0, hpSkipCount: 0, hpAvgReturnMs: null, hpMinReturnMs: null,
+          }),
+        },
+      })
+      expect(wrapper.get('[data-testid="result-hp-success"]').text()).toBe('0回')
+      expect(wrapper.get('[data-testid="result-hp-avg"]').text()).toBe('-')
+    })
+
+    it.each([
+      ['OFFのrun', { homePosition: false, hpSuccessCount: 0, hpSkipCount: 0 }],
+      ['項目のない旧形式', {}],
+    ])('%sでは何も表示しない', (_label, overrides) => {
+      const wrapper = mount(ResultScreen, { props: { summary: summary(overrides) } })
+      expect(wrapper.find('[data-testid="result-home-position"]').exists()).toBe(false)
+      expect(wrapper.find('.home-position-summary').exists()).toBe(false)
+      expect(wrapper.get('.run-result-body').classes()).not.toContain('has-home-position')
+    })
+
+    it('途中終了のrunでも、確認の集計を表示する', () => {
+      const wrapper = mount(ResultScreen, {
+        props: { summary: withHomePosition({ endedBy: 'ended', analysis: { ...summary().analysis, rank: null, personalBest: null } }) },
+      })
+      expect(wrapper.get('[data-testid="result-ended-early"]').exists()).toBe(true)
+      expect(wrapper.get('[data-testid="result-hp-success"]').text()).toBe('12回')
+    })
+
+    it('フリーのrunでも表示し、成績カードは左カラム(overview)の末尾へ置く', () => {
+      const wrapper = mount(ResultScreen, {
+        props: {
+          summary: withHomePosition({
+            mode: 'free', endedBy: 'ended', targetCount: null,
+            analysis: { rank: null, personalBest: null, growth: { improvements: [] }, weakKeys: [], message: { id: 'a', text: 'おつかれさまでした。' } },
+          }),
+        },
+      })
+      const overview = wrapper.get('.run-result-overview').element
+      const card = wrapper.get('[data-testid="result-home-position"]').element
+      expect(overview.contains(card)).toBe(true)
+      expect(overview.lastElementChild).toBe(card)
+      expect(wrapper.get('.run-result-details').element.contains(card)).toBe(false)
+    })
+
+    it('最悪ケース(自己ベスト+成長3行+苦手キー3つ+確認の成績)でも全項目を1画面の構成で表示する', () => {
+      const value = withHomePosition()
+      value.analysis.growth = {
+        improvements: [
+          { type: 'kpm', text: '入力速度が前回より+12 KPM！' },
+          { type: 'accuracy', text: '正解率が前回より+3%' },
+          { type: 'mistakes', text: 'ミスが2回減りました。' },
+        ],
+      }
+      value.analysis.weakKeys = [
+        { key: 'a', shown: 8, misses: 3, rate: 0.375 },
+        { key: 's', shown: 8, misses: 2, rate: 0.25 },
+        { key: 'd', shown: 8, misses: 1, rate: 0.125 },
+      ]
+      value.mode = 'timeLimit'
+      value.timeLimitSec = 60
+      value.targetCount = null
+      value.endedBy = 'timeUp'
+      const wrapper = mount(ResultScreen, { props: { summary: value } })
+      expect(wrapper.get('.run-result-body').classes()).toEqual(
+        expect.arrayContaining(['is-full-content', 'has-home-position']),
+      )
+      expect(wrapper.get('[data-testid="result-personal-best"]').exists()).toBe(true)
+      expect(wrapper.findAll('.result-growth-list li')).toHaveLength(3)
+      expect(wrapper.findAll('.weak-key-list li')).toHaveLength(3)
+      expect(wrapper.get('[data-testid="result-home-position"]').exists()).toBe(true)
+      expect(wrapper.findAll('.run-result-grid > div')).toHaveLength(7)
+    })
+
+    it('成績カードの分だけ密度を一段階詰める(sparse→medium、medium→full)', () => {
+      const sparse = withHomePosition()
+      sparse.analysis = { ...sparse.analysis, growth: { improvements: [] }, weakKeys: [] }
+      expect(mount(ResultScreen, { props: { summary: sparse } }).get('.run-result-body').classes())
+        .toContain('is-medium-content')
+
+      const medium = withHomePosition()
+      medium.analysis = { ...medium.analysis, growth: { improvements: [] } }
+      expect(mount(ResultScreen, { props: { summary: medium } }).get('.run-result-body').classes())
+        .toContain('is-full-content')
+
+      // OFFのときの密度は従来どおり
+      const off = summary()
+      off.analysis = { ...off.analysis, growth: { improvements: [] }, weakKeys: [] }
+      expect(mount(ResultScreen, { props: { summary: off } }).get('.run-result-body').classes())
+        .toContain('is-sparse-content')
+    })
+  })
 })

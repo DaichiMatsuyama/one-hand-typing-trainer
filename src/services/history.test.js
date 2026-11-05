@@ -102,4 +102,66 @@ describe('練習履歴', () => {
     expect(loadHistory(storage)[0]).toMatchObject({ id: 'run-0', rankVersion: null, messageId: null })
     expect(loadHistory(storage)[0]).not.toHaveProperty('keys')
   })
+
+  it('ホームポジション項目(設定値・成功/スキップ回数・平均/最短復帰時間)を保存して読み戻す', () => {
+    const storage = memoryStorage()
+    expect(appendHistory({
+      ...record(),
+      homePosition: true,
+      hpSuccessCount: 9,
+      hpSkipCount: 1,
+      hpAvgReturnMs: 1200,
+      hpMinReturnMs: 800,
+    }, storage)).toBe(true)
+    expect(loadHistory(storage)[0]).toMatchObject({
+      homePosition: true, hpSuccessCount: 9, hpSkipCount: 1, hpAvgReturnMs: 1200, hpMinReturnMs: 800,
+    })
+
+    // 成功0回の確認ありrun: 平均・最短はnull
+    expect(appendHistory({
+      ...record(1), homePosition: true, hpSuccessCount: 0, hpSkipCount: 2,
+      hpAvgReturnMs: null, hpMinReturnMs: null,
+    }, storage)).toBe(true)
+    expect(loadHistory(storage)[0]).toMatchObject({
+      homePosition: true, hpSuccessCount: 0, hpSkipCount: 2, hpAvgReturnMs: null, hpMinReturnMs: null,
+    })
+  })
+
+  it('ホームポジション項目がない旧記録は、記録を捨てずOFF・不明(null)として読む', () => {
+    const storage = memoryStorage()
+    storage.setItem(HISTORY_KEY, JSON.stringify([record()]))
+    expect(loadHistory(storage)[0]).toMatchObject({
+      homePosition: false,
+      hpSuccessCount: null,
+      hpSkipCount: null,
+      hpAvgReturnMs: null,
+      hpMinReturnMs: null,
+    })
+  })
+
+  it.each([
+    ['小数', 1.5],
+    ['負数', -1],
+    ['文字列', '3'],
+    ['上限超過', 86_400_001],
+    ['Infinity相当', 1e400],
+  ])('壊れたホームポジション項目(%s)はnullへ正規化し、記録は残す', (_label, bad) => {
+    const storage = memoryStorage()
+    storage.setItem(HISTORY_KEY, JSON.stringify([{
+      ...record(),
+      homePosition: 'yes',
+      hpSuccessCount: bad,
+      hpSkipCount: bad,
+      hpAvgReturnMs: bad,
+      hpMinReturnMs: bad,
+    }]))
+    expect(loadHistory(storage)[0]).toMatchObject({
+      id: 'run-0',
+      homePosition: false,
+      hpSuccessCount: null,
+      hpSkipCount: null,
+      hpAvgReturnMs: null,
+      hpMinReturnMs: null,
+    })
+  })
 })

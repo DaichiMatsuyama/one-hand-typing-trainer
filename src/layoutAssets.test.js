@@ -140,6 +140,37 @@ describe('実機向けレイアウト', () => {
     expect(styles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.keyboard-clear-effect-circle\s*\{[\s\S]*?animation:\s*none !important/)
   })
 
+  it('ホームポジション確認: スキップは44px以上でメニューと見分けがつき、強調は動きを減らす設定でパルスしない', () => {
+    const skip = styles.match(/\.home-skip-button\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    expect(skip).toMatch(/min-height:\s*44px/)
+    expect(Number(skip.match(/min-width:\s*(\d+)px/)?.[1])).toBeGreaterThan(
+      Number(styles.match(/--strip-menu-width:\s*(\d+)px/)[1]),
+    )
+    // メニューは白地・角丸9px。スキップは塗り色と丸い形で変える
+    const menu = styles.match(/\.menu-button\s*\{([\s\S]*?)\}/)[1]
+    expect(menu).toMatch(/background:\s*white/)
+    expect(skip).not.toMatch(/background:\s*white/)
+    expect(skip.match(/border-radius:\s*(\d+)px/)[1]).not.toBe(menu.match(/border-radius:\s*(\d+)px/)[1])
+    expect(contrastRatio('ffffff', 'a85a00')).toBeGreaterThanOrEqual(4.5)
+
+    expect(styles).toMatch(/\.key\.home-target\s*\{[\s\S]*?animation:\s*home-target-pulse/)
+    expect(styles).toMatch(/\.key\.home-target\.home-confirmed\s*\{[\s\S]*?animation:\s*none/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.key\.home-target\s*\{[\s\S]*?animation:\s*none !important/)
+  })
+
+  it.each([
+    ['667x375', 667, 375, {}],
+    ['852x393', 852, 393, { left: 59, right: 59, bottom: 21 }],
+  ])('ホームポジション確認の案内とスキップが%sの出題欄(最も狭いモード帯)へ1行で収まる', (_name, width, height, safeArea) => {
+    const metrics = calculateLandscapeLayout({ width, height, safeArea })
+    const skipWidth = Number(styles.match(/\.home-skip-button\s*\{[\s\S]*?min-width:\s*(\d+)px/)[1])
+    // 出題欄の左右の余白(8px+3px)と案内との間隔(8px)
+    const chrome = 8 + 3 + 8
+    // 最長の案内文「✓確認できました。指を離すと次へ進みます」(20文字)を最小の文字サイズで見積もる
+    const guideWidth = 20 * 0.78 * 16
+    expect(guideWidth + skipWidth + chrome).toBeLessThanOrEqual(metrics.promptAvailableWidth)
+  })
+
   const landscapeCases = [
     ['iPhone SE系', 667, 375, { left: 0, right: 0, bottom: 0 }],
     ['Dynamic Island搭載機', 852, 393, { left: 59, right: 59, bottom: 21 }],

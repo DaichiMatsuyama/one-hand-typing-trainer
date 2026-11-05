@@ -19,6 +19,7 @@ export const defaultSettings = Object.freeze({
   targetCount: DEFAULT_TARGET_COUNT,
   timeLimitSec: DEFAULT_TIME_LIMIT_SEC,
   feedbackEffects: true,
+  homePosition: false,
 })
 
 export const defaultResults = Object.freeze({
@@ -44,6 +45,8 @@ function sanitizeSettings(settings = {}) {
       ? source.timeLimitSec
       : DEFAULT_TIME_LIMIT_SEC,
     feedbackEffects: source.feedbackEffects !== false,
+    // 練習モードとは独立した「ホームポジション確認」。既定はOFF(true以外はOFF)。
+    homePosition: source.homePosition === true,
   }
 }
 

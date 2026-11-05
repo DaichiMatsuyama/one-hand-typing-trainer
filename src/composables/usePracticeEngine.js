@@ -11,6 +11,13 @@ import {
   restorePracticeSession,
   submitKey,
 } from '../domain/practiceSession.js'
+import {
+  createHomePositionStats,
+  getHomePositionKeys,
+  recordHomePositionSkip,
+  recordHomePositionSuccess,
+  summarizeHomePosition,
+} from '../domain/homePosition.js'
 import { summarizeRunStats } from '../domain/run.js'
 import { formatDuration, getTotalStats } from '../domain/stats.js'
 import { addKeyAttempt, findWeakKeys, sanitizeKeyStats } from '../domain/keyStats.js'
@@ -97,6 +104,9 @@ export function usePracticeEngine({
   const now = ref(initialTimestamp)
   const resetNotice = ref('')
   const clearEffect = ref(null)
+  // ホームポジション確認中だけ値を持つ(保存しない)。
+  // { id, hand, keys, established, clearedActiveMs, returnMs }
+  const homePositionCheck = ref(null)
   const wrongKeys = ref([])
   const run = ref(null)
   const resultReady = ref(false)
@@ -131,6 +141,7 @@ export function usePracticeEngine({
       timeLimitSec: run.value.timeLimitSec,
       activeMs: getRunActiveMs(now.value),
       endedBy: null,
+      ...summarizeRunHomePosition(run.value),
     }
   })
   const runElapsedText = computed(() => formatDuration(runSummary.value.inputMs))
@@ -163,6 +174,7 @@ export function usePracticeEngine({
   let attached = false
   let shownPositions = new Set()
   let clearEffectId = 0
+  let homePositionCheckId = 0
   // 入力ゼロの結果は履歴に残らないため、画面へ出したメッセージはエンジン内でも引き継ぐ。
   let lastDisplayedMessageId = loadHistory(storage)[0]?.messageId ?? null
 
@@ -170,6 +182,11 @@ export function usePracticeEngine({
     if (!run.value || !run.value.clockStarted) return run.value?.activeMs ?? 0
     if (run.value.summary || run.value.activeStartedAt === null) return run.value.activeMs
     return Math.max(run.value.activeMs, run.value.activeMs + timestamp - run.value.activeStartedAt)
+  }
+
+  // runの設定値(開始時に固定)と集計から、ホームポジションの成績項目を作る。
+  function summarizeRunHomePosition(runState) {
+    return summarizeHomePosition(Boolean(runState?.homePosition), runState?.homePositionStats)
   }
 
   function shouldRunSessionClock() {
@@ -213,6 +230,8 @@ export function usePracticeEngine({
         }
         pauseReasons.add(name)
         changed = true
+        // 停止すると画面側が追跡中の接触をすべて捨てるため、成立済みの確認も未成立へ戻す。
+        resetHomePositionEstablishment()
       } else if (!on && pauseReasons.delete(name)) {
         changed = true
       }
@@ -262,6 +281,34 @@ export function usePracticeEngine({
     }
   }
 
+  function clearHomePositionCheck() {
+    homePositionCheck.value = null
+  }
+
+  function resetHomePositionEstablishment() {
+    if (!homePositionCheck.value?.established) return
+    homePositionCheck.value = { ...homePositionCheck.value, established: false, returnMs: null }
+  }
+
+  // 画面側が追跡中の接触を捨てた(blurなど): 成立済みなら未成立へ戻し、置き直しを求める。
+  function resetHomePosition() {
+    resetHomePositionEstablishment()
+    return true
+  }
+
+  // 問題クリア直後に確認状態へ入る。復帰時間は、このときのrun実効クロックから測る。
+  function enterHomePositionCheck(timestamp) {
+    homePositionCheckId += 1
+    homePositionCheck.value = {
+      id: homePositionCheckId,
+      hand: settings.value.hand,
+      keys: getHomePositionKeys(settings.value.hand),
+      established: false,
+      clearedActiveMs: getRunActiveMs(timestamp),
+      returnMs: null,
+    }
+  }
+
   function cancelAutoAdvance() {
     clearTimeout(autoAdvanceTimer)
     autoAdvanceTimer = undefined
@@ -295,6 +342,7 @@ export function usePracticeEngine({
   function beginQuestion(savedSession = null, timestamp = getNow()) {
     wrongKeys.value = []
     shownPositions = new Set()
+    clearHomePositionCheck()
     cancelAutoAdvance()
     clearTimeout(feedbackTimer)
     feedbackTimer = undefined
@@ -320,7 +368,8 @@ export function usePracticeEngine({
 
   function scheduleAutoAdvance() {
     cancelAutoAdvance()
-    if (!session.value.isComplete) return
+    // ホームポジション確認中は、確認またはスキップまで次の問題へ進まない。
+    if (!session.value.isComplete || homePositionCheck.value) return
     autoAdvanceTimer = setTimeout(advanceToNextQuestion, AUTO_ADVANCE_MS)
   }
 
@@ -367,6 +416,7 @@ export function usePracticeEngine({
       session.value = createInactiveSession(currentQuestion.value, timestamp)
     }
     wrongKeys.value = []
+    clearHomePositionCheck()
     cancelAutoAdvance()
     snapshot(timestamp)
   }
@@ -394,6 +444,9 @@ export function usePracticeEngine({
       // 停止の理由が残っているときは、時計を動かさない(解除されたときに動き出す)。
       activeStartedAt: clockStarted && pauseReasons.size === 0 ? timestamp : null,
       keys: {},
+      // 設定はrun開始時に固定する(runの途中で変わっても集計と記録の設定値を一致させる)。
+      homePosition: Boolean(settings.value.homePosition),
+      homePositionStats: createHomePositionStats(),
       summary: null,
     }
     beginQuestion(null, timestamp)
@@ -410,7 +463,7 @@ export function usePracticeEngine({
       layout: settings.value.layoutVariant,
       targetCount: summary.targetCount,
       timeLimitSec: summary.timeLimitSec,
-      homePosition: false,
+      homePosition: summary.homePosition,
       endedBy: summary.endedBy,
       activeMs: Math.round(summary.activeMs),
       inputMs: Math.round(summary.inputMs),
@@ -421,6 +474,10 @@ export function usePracticeEngine({
       accuracy: summary.accuracy,
       kpm: summary.kpm,
       menuOpenCount: summary.menuOpenCount,
+      hpSuccessCount: summary.hpSuccessCount,
+      hpSkipCount: summary.hpSkipCount,
+      hpAvgReturnMs: summary.hpAvgReturnMs,
+      hpMinReturnMs: summary.hpMinReturnMs,
       keys: sanitizeKeyStats(keys),
       rankVersion,
       messageId,
@@ -484,6 +541,7 @@ export function usePracticeEngine({
         timeLimitSec: run.value.timeLimitSec,
         activeMs: Math.max(0, Math.round(activeMs)),
         endedBy,
+        ...summarizeRunHomePosition(run.value),
       }
       const history = loadHistory(storage)
       const initialRecord = buildHistoryRecord(summary, timestamp, createDeviceId(), {
@@ -494,6 +552,8 @@ export function usePracticeEngine({
       const finalSummary = { ...summary, analysis }
       preservePendingSession(timestamp)
       // 終了後に、自動で次へ進むタイマーや結果前の表示が残らないようにする。
+      // 確認中に終わった場合、その確認は成功にもスキップにも数えない。
+      clearHomePositionCheck()
       cancelAutoAdvance()
       session.value = pausePracticeSession(session.value, timestamp)
       run.value = { ...run.value, activeMs: finalSummary.activeMs, activeStartedAt: null, summary: finalSummary }
@@ -518,6 +578,7 @@ export function usePracticeEngine({
     const timestamp = getNow()
     now.value = timestamp
     preservePendingSession(timestamp)
+    clearHomePositionCheck()
     cancelAutoAdvance()
     run.value = null
     updatePauseReasons([...pauseReasons].map((reason) => [reason, false]), timestamp)
@@ -542,6 +603,7 @@ export function usePracticeEngine({
 
   function closeMenu() {
     const changed = setPauseReason('menu', false)
+    // 確認中なら自動では進めず、指を置き直す確認へ戻る(scheduleAutoAdvanceが確認中は何もしない)。
     if (changed && session.value.isComplete && !run.value?.summary) scheduleAutoAdvance()
     return changed
   }
@@ -628,6 +690,9 @@ export function usePracticeEngine({
           resultTimer = undefined
           resultReady.value = true
         }, AUTO_ADVANCE_MS)
+      } else if (run.value?.homePosition) {
+        // 最終問題以外は、次の問題の前にホームポジションを確認する。
+        enterHomePositionCheck(timestamp)
       } else {
         scheduleAutoAdvance()
       }
@@ -640,7 +705,45 @@ export function usePracticeEngine({
 
   // やり直し系の操作は、画面ではフリーだけに出す。エンジン側でも同じ条件で守る。
   function allowsRetry() {
-    return !pauseReasons.has('menu') && (!run.value || run.value.mode === 'free')
+    return !pauseReasons.has('menu') && !homePositionCheck.value
+      && (!run.value || run.value.mode === 'free')
+  }
+
+  // ホームの4キーに指がそろった(画面側の検出から呼ぶ)。復帰時間はここで確定する。
+  function confirmHomePosition() {
+    const check = homePositionCheck.value
+    if (!check || check.established || pauseReasons.size > 0 || run.value?.summary) return false
+    const timestamp = getNow()
+    // 確認中に制限時間が尽きたら、成立にせず時間切れで終える。
+    if (expireTimeLimit(timestamp)) return false
+    const returnMs = Math.max(0, Math.round(getRunActiveMs(timestamp) - check.clearedActiveMs))
+    homePositionCheck.value = { ...check, established: true, returnMs }
+    return true
+  }
+
+  // 成立に使った接触のどれかが離れた: 成功として次の問題へ進む。
+  function completeHomePosition() {
+    const check = homePositionCheck.value
+    if (!check?.established || pauseReasons.size > 0 || run.value?.summary) return false
+    if (expireTimeLimit(getNow())) return false
+    run.value = {
+      ...run.value,
+      homePositionStats: recordHomePositionSuccess(run.value.homePositionStats, check.returnMs),
+    }
+    advanceToNextQuestion()
+    return true
+  }
+
+  // 「スキップ」: 成功には数えず、スキップ回数だけ記録して次の問題へ進む。
+  function skipHomePosition() {
+    if (!homePositionCheck.value || pauseReasons.size > 0 || run.value?.summary) return false
+    if (expireTimeLimit(getNow())) return false
+    run.value = {
+      ...run.value,
+      homePositionStats: recordHomePositionSkip(run.value.homePositionStats),
+    }
+    advanceToNextQuestion()
+    return true
   }
 
   function resetQuestion() {
@@ -660,6 +763,7 @@ export function usePracticeEngine({
       run.value = {
         ...run.value,
         baseline: { ...defaultResults },
+        homePositionStats: createHomePositionStats(),
         activeMs: 0,
         activeStartedAt: run.value.clockStarted && pauseReasons.size === 0 ? timestamp : null,
         keys: {},
@@ -745,6 +849,7 @@ export function usePracticeEngine({
     now,
     resetNotice,
     clearEffect,
+    homePositionCheck,
     wrongKeys,
     run,
     resultReady,
@@ -764,6 +869,10 @@ export function usePracticeEngine({
     waitingForFirstKey,
     currentQuestion,
     pressKey,
+    confirmHomePosition,
+    resetHomePosition,
+    completeHomePosition,
+    skipHomePosition,
     resetQuestion,
     resetAllStats,
     selectHand,

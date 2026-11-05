@@ -324,6 +324,53 @@ h1 {
   white-space: nowrap;
 }
 
+.prompt-card:focus {
+  outline: none;
+}
+
+.prompt-card.home-check {
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 3px 0 8px;
+}
+
+/* 問題文字の代わりに案内文を出す。文字は大きめの太字で、置く指の4キーを読み取りやすくする */
+.home-check-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--accent-dark);
+  font-size: clamp(0.78rem, 3.4dvh, 0.9rem);
+  font-weight: 850;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.prompt-card.home-established .home-check-text {
+  color: #176b46;
+}
+
+.home-check-mark-inline {
+  margin-right: 0.25em;
+  font-weight: 900;
+}
+
+/* 出題欄の右端のスキップ。メニュー(白地・角丸・小さめ)と取り違えないよう、橙の塗り・丸み・大きめにする */
+.home-skip-button {
+  flex: 0 0 auto;
+  min-width: 80px;
+  min-height: 44px;
+  padding: 4px 14px;
+  border: 2px solid #7a3f00;
+  border-radius: 22px;
+  color: white;
+  background: #a85a00;
+  font-size: 0.8rem;
+  font-weight: 850;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
 .prompt-text {
   display: flex;
   min-width: 0;
@@ -502,6 +549,12 @@ h1 {
   z-index: 1;
 }
 
+/* ホームポジション確認中は、やり直しを無効にする(aria-disabledで伝え、ネイティブdisabledは使わない) */
+.reset-button.is-disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 @keyframes reset-fill {
   to {
     width: 100%;
@@ -636,6 +689,33 @@ h1 {
   font-size: 1rem;
   font-weight: 850;
   cursor: pointer;
+}
+
+/* ホームポジション確認の切替は、開始ボタンの左隣へ置いて設定画面の高さを増やさない */
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-screen .settings-footer .home-position-toggle {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.home-position-toggle .symbol-label small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.settings-footer .start-practice-button {
+  flex: 0 0 min(52%, 320px);
+  width: auto;
+  margin: 0;
 }
 
 .build-id {
@@ -944,6 +1024,65 @@ h1 {
   line-height: 1.3;
 }
 
+/* ホームポジション確認の成績: 左カラム末尾の小さなカード */
+.home-position-summary {
+  margin: 4px 0 2px;
+  padding: 3px 6px 4px;
+  border: 1px solid #b7d7ca;
+  border-radius: 10px;
+  background: #eef4f0;
+  text-align: left;
+}
+
+.home-position-summary h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--result-item-label-size);
+  line-height: 1.2;
+}
+
+.home-position-summary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 6px;
+  margin: 1px 0 0;
+}
+
+.home-position-summary dl div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 3px;
+}
+
+.home-position-summary dt {
+  color: #35404a;
+  font-size: var(--result-item-label-size);
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.home-position-summary dd {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+/* 成績カードの分、左カラムの上下の余白と文字を少し詰める(文字は13px以上を保つ) */
+.run-result-body.has-home-position {
+  --result-rank-size: clamp(3rem, 14dvh, 3.75rem);
+}
+
+.run-result-body.has-home-position .rank-summary {
+  margin-bottom: 3px;
+}
+
+.run-result-body.has-home-position .result-message {
+  margin-block: 3px;
+}
+
 .run-result-actions {
   display: flex;
   flex: 0 0 auto;
@@ -1176,6 +1315,41 @@ h1 {
     0 var(--key-shadow-depth) 0 rgb(49 56 65 / 25%);
 }
 
+/* ホームポジション確認: 置く4キーを太い橙の枠とパルスで強調(指の色分けは維持)し、ほかのキーは薄くする */
+.keyboard-panel.home-check .key:not(.home-target) {
+  opacity: 0.4;
+}
+
+.key.home-target {
+  z-index: 1;
+  border-color: #a85a00;
+  opacity: 1;
+  box-shadow:
+    0 0 0 4px rgb(196 118 5 / 55%),
+    0 var(--key-shadow-depth) 0 rgb(49 56 65 / 25%);
+  animation: home-target-pulse 1.1s ease-in-out infinite;
+}
+
+/* 成立したら緑+チェック。パルスは止める */
+.key.home-target.home-confirmed {
+  border-color: #176b46;
+  background: #74d5ad;
+  box-shadow:
+    0 0 0 4px rgb(23 107 70 / 45%),
+    0 var(--key-shadow-depth) 0 rgb(49 56 65 / 25%);
+  animation: none;
+}
+
+.home-check-mark {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  color: #0f4d31;
+  font-size: clamp(1rem, calc(var(--key-pitch) * 0.24), 1.7rem);
+  font-weight: 900;
+  line-height: 1;
+}
+
 .key.correct {
   border-color: var(--accent);
   background: #74d5ad;
@@ -1270,6 +1444,19 @@ h1 {
 
 @keyframes correct-flash {
   50% { transform: scale(1.06); border-color: var(--accent); }
+}
+
+@keyframes home-target-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 3px rgb(196 118 5 / 60%),
+      0 var(--key-shadow-depth) 0 rgb(49 56 65 / 25%);
+  }
+  50% {
+    box-shadow:
+      0 0 0 9px rgb(196 118 5 / 22%),
+      0 var(--key-shadow-depth) 0 rgb(49 56 65 / 25%);
+  }
 }
 
 @keyframes incorrect-shake {
@@ -1431,6 +1618,11 @@ h1 {
   .keyboard-clear-effect-circle {
     opacity: 0.72;
     transform: none;
+    animation: none !important;
+  }
+
+  /* 動きを減らす設定では、確認の4キーはパルスせず、太い枠だけで示す */
+  .key.home-target {
     animation: none !important;
   }
 

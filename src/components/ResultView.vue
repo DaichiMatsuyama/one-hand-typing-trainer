@@ -18,6 +18,8 @@ const props = defineProps({
   completedQuestions: { type: Number, default: 0 },
   nextKey: { type: String, default: '' },
   nextFinger: { type: String, default: '' },
+  // ホームポジション確認中: 自動では進まず、やり直しも無効にする。
+  homeChecking: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['reset', 'reset-all'])
@@ -30,6 +32,8 @@ const remainingUrgent = computed(() => props.mode === 'timeLimit'
 
 const liveMessage = computed(() => {
   if (props.notice) return props.notice
+  // 確認中の案内は、出題欄の読み上げ領域(ホームポジション確認)が担当する。
+  if (props.isComplete && props.homeChecking) return 'クリア！'
   if (props.isComplete) return 'クリア！ 自動で次の問題に進みます'
   if (props.feedback?.type === 'incorrect') return `不正解。${nextInstruction.value}`
   if (props.feedback?.type === 'correct') return `正解。次は${nextInstruction.value}`
@@ -43,6 +47,7 @@ let longPressFired = false
 let cancelledPress = false
 
 function startPress(event) {
+  if (props.homeChecking) return
   if (event.button !== undefined && event.button !== 0) return
   longPressFired = false
   cancelledPress = false
@@ -68,6 +73,7 @@ function cancelPress() {
 }
 
 function handleClick() {
+  if (props.homeChecking) return
   // 長押しが成立した直後のclickは通常のやり直しとして扱わない
   if (longPressFired) {
     longPressFired = false
@@ -115,7 +121,8 @@ onBeforeUnmount(() => clearTimeout(pressTimer))
       <button
         type="button"
         class="secondary-button reset-button"
-        :class="{ pressing }"
+        :class="{ pressing, 'is-disabled': homeChecking }"
+        :aria-disabled="homeChecking ? 'true' : undefined"
         :style="{ '--long-press-ms': `${LONG_PRESS_RESET_MS}ms` }"
         data-testid="reset"
         aria-describedby="reset-hint"

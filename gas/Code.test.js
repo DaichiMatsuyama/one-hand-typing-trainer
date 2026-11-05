@@ -15,6 +15,8 @@ function createEnvironment({ accessCode = 'secret-code-123', adminCode = null } 
   const cache = new Map()
   const sheets = new Map()
   const calls = { tryLock: 0, waitLock: 0, lockReleased: 0 }
+  // ロックと書き込みの順序を確かめるための記録
+  const events = []
   let currentNow = NOW
 
   class FixedDate extends Date {
@@ -26,21 +28,43 @@ function createEnvironment({ accessCode = 'secret-code-123', adminCode = null } 
     static now() { return currentNow }
   }
 
-  const createSheet = (name) => {
+  // 新規作成のシートの既定グリッドは26列。範囲外への書き込みは例外にする(実際のSheetsと同じ)。
+  const createSheet = (name, initialMaxColumns = 26) => {
     const rows = []
+    let maxColumns = initialMaxColumns
+    const assertInGrid = (column, numColumns) => {
+      if (column < 1 || column - 1 + numColumns > maxColumns) {
+        throw new Error(`範囲がシートの列数(${maxColumns})を超えています`)
+      }
+    }
     const sheet = {
+      getMaxColumns: () => maxColumns,
+      insertColumnsAfter: (afterPosition, howMany) => {
+        expect(afterPosition).toBe(maxColumns)
+        maxColumns += howMany
+        events.push(`insertColumnsAfter:${afterPosition}:${howMany}`)
+      },
       getLastRow: () => rows.length,
       getLastColumn: () => rows.reduce((max, row) => Math.max(max, row.length), 0),
       getRange: (row, column, numRows, numColumns) => ({
+        // 指定した列から書く。左側の既存セルは残す(ヘッダー移行で右側へ追記するため)。
         setValues: (values) => {
-          values.forEach((value, index) => { rows[row - 1 + index] = value })
-          expect(column).toBe(1)
+          assertInGrid(column, numColumns)
           expect(numColumns).toBe(values[0].length)
           expect(numRows).toBe(values.length)
+          events.push(`set:${row}:${column}`)
+          values.forEach((value, index) => {
+            const target = rows[row - 1 + index] ?? []
+            value.forEach((cell, offset) => { target[column - 1 + offset] = cell })
+            rows[row - 1 + index] = target
+          })
         },
-        getValues: () => rows
-          .slice(row - 1, row - 1 + numRows)
-          .map((cells) => cells.slice(column - 1, column - 1 + numColumns)),
+        getValues: () => {
+          assertInGrid(column, numColumns)
+          return rows
+            .slice(row - 1, row - 1 + numRows)
+            .map((cells) => cells.slice(column - 1, column - 1 + numColumns))
+        },
       }),
       setFrozenRows: () => {},
     }
@@ -66,11 +90,15 @@ function createEnvironment({ accessCode = 'secret-code-123', adminCode = null } 
     LockService: {
       getScriptLock: () => ({
         tryLock: () => { calls.tryLock += 1; return true },
-        waitLock: () => { calls.waitLock += 1 },
-        releaseLock: () => { calls.lockReleased += 1 },
+        waitLock: () => { calls.waitLock += 1; events.push('waitLock') },
+        releaseLock: () => { calls.lockReleased += 1; events.push('releaseLock') },
       }),
     },
-    SpreadsheetApp: { getActiveSpreadsheet: () => spreadsheet, openById: () => spreadsheet },
+    SpreadsheetApp: {
+      getActiveSpreadsheet: () => spreadsheet,
+      openById: () => spreadsheet,
+      flush: () => { events.push('flush') },
+    },
     ContentService: {
       MimeType: { JSON: 'json' },
       createTextOutput: (text) => ({ text, setMimeType() { return this } }),
@@ -89,13 +117,15 @@ function createEnvironment({ accessCode = 'secret-code-123', adminCode = null } 
   // 先頭(1行目)は見出し行。データは2行目から
   const dataRows = (name = 'records') => (sheets.get(name)?.rows ?? []).slice(1)
   const rowsFor = (name) => sheets.get(name)?.rows ?? []
-  const seedSheet = (name, rows) => {
-    if (!sheets.has(name)) createSheet(name)
+  const seedSheet = (name, rows, { maxColumns } = {}) => {
+    if (!sheets.has(name)) {
+      createSheet(name, maxColumns ?? Math.max(26, ...rows.map((row) => row.length)))
+    }
     const target = sheets.get(name).rows
     rows.forEach((row) => target.push([...row]))
   }
   const advanceTime = (ms) => { currentNow += ms }
-  return { post, sheetRows, dataRows, rowsFor, seedSheet, calls, cache, advanceTime }
+  return { post, sheetRows, dataRows, rowsFor, seedSheet, calls, events, cache, advanceTime }
 }
 
 const record = (overrides = {}) => ({
@@ -139,12 +169,15 @@ const runRecord = (overrides = {}) => ({
   ...overrides,
 })
 
-const RUN_HEADERS = [
+// ホームポジション列を追加する前の旧ヘッダー(24列)
+const LEGACY_RUN_HEADERS = [
   'receivedAt', 'id', 'ts', 'deviceId', 'mode', 'hand', 'level', 'includeSymbols',
   'layout', 'targetCount', 'timeLimitSec', 'homePosition', 'endedBy', 'activeMs',
   'inputMs', 'completedQuestions', 'correctCount', 'mistakes', 'attempts', 'accuracy',
   'kpm', 'menuOpenCount', 'rankVersion', 'appVersion',
 ]
+const HP_HEADERS = ['hpSuccessCount', 'hpSkipCount', 'hpAvgReturnMs', 'hpMinReturnMs']
+const RUN_HEADERS = [...LEGACY_RUN_HEADERS, ...HP_HEADERS]
 
 const runResponse = (saved, rejected = 0, rejectedIds = []) => ({
   ok: true, saved, rejected, rejectedIds,
@@ -275,15 +308,16 @@ describe('Code.gs runごとの記録', () => {
     action: 'log_run', code: 'secret-code-123', deviceId: 'dev-mine-01', records, ...overrides,
   })
 
-  it('runsシートを作成し、指定された24列の順でrunを保存する', () => {
+  it('runsシートを作成し、指定された28列の順でrunを保存する(旧クライアントの記録は新4列が空欄)', () => {
     expect(env.post(postRuns([runRecord()]))).toEqual(runResponse(1))
     expect(env.rowsFor('runs')[0]).toEqual(RUN_HEADERS)
+    expect(RUN_HEADERS).toHaveLength(28)
     const row = env.dataRows('runs')[0]
     expect(row[0]).toBeInstanceOf(Date)
     expect(row.slice(1)).toEqual([
       'run-0001', '2026-11-03T03:00:00.000Z', 'dev-mine-01', 'timeAttack', 'right', 2,
       true, 'jis', 10, null, false, 'completed', 12_345, 10_000, 10, 40, 2, 42, 95,
-      240, 1, '', 'abc1234',
+      240, 1, '', 'abc1234', '', '', '', '',
     ])
   })
 
@@ -318,6 +352,202 @@ describe('Code.gs runごとの記録', () => {
     ['KPMの丸め差+1', runRecord({ kpm: 241 })],
   ])('%sは受理する', (_label, valid) => {
     expect(env.post(postRuns([valid]))).toEqual(runResponse(1))
+  })
+
+  const hpRecord = (overrides = {}) => runRecord({
+    homePosition: true,
+    hpSuccessCount: 9,
+    hpSkipCount: 1,
+    hpAvgReturnMs: 1200,
+    hpMinReturnMs: 800,
+    ...overrides,
+  })
+
+  it('ホームポジション確認の4項目を末尾の4列へ保存する', () => {
+    expect(env.post(postRuns([hpRecord()]))).toEqual(runResponse(1))
+    const row = env.dataRows('runs')[0]
+    expect(row.slice(-4)).toEqual([9, 1, 1200, 800])
+    expect(row[11]).toBe(true)
+    expect(row).toHaveLength(RUN_HEADERS.length)
+  })
+
+  it('成功0回の確認ありrunは、平均・最短をnullで受理して空欄にする', () => {
+    const none = hpRecord({
+      hpSuccessCount: 0, hpSkipCount: 3, hpAvgReturnMs: null, hpMinReturnMs: null,
+    })
+    expect(env.post(postRuns([none]))).toEqual(runResponse(1))
+    expect(env.dataRows('runs')[0].slice(-4)).toEqual([0, 3, '', ''])
+  })
+
+  it('新4項目の省略とnullは空欄で保存する(確認なしのrunが0回で送る場合も受理する)', () => {
+    const nulls = runRecord({
+      id: 'run-nulls', hpSuccessCount: null, hpSkipCount: null, hpAvgReturnMs: null, hpMinReturnMs: null,
+    })
+    const off = runRecord({
+      id: 'run-off-1', homePosition: false, hpSuccessCount: 0, hpSkipCount: 0,
+      hpAvgReturnMs: null, hpMinReturnMs: null,
+    })
+    expect(env.post(postRuns([nulls, off]))).toEqual(runResponse(2))
+    expect(env.dataRows('runs').map((row) => row.slice(-4))).toEqual([
+      ['', '', '', ''],
+      [0, 0, '', ''],
+    ])
+  })
+
+  it.each([
+    ['回数の上限', hpRecord({
+      activeMs: 86_400_000, inputMs: 1000, kpm: null, completedQuestions: 100_000,
+      hpSuccessCount: 100_000, hpSkipCount: 0, hpAvgReturnMs: 864, hpMinReturnMs: 1,
+    })],
+    ['時間の上限', hpRecord({
+      activeMs: 86_400_000, hpSuccessCount: 1, hpSkipCount: 0,
+      hpAvgReturnMs: 86_400_000, hpMinReturnMs: 86_400_000,
+    })],
+    ['最短と平均が同じ', hpRecord({ hpAvgReturnMs: 500, hpMinReturnMs: 500 })],
+    ['成功+スキップが完了問題数ちょうど', hpRecord({ hpSuccessCount: 5, hpSkipCount: 5, hpAvgReturnMs: 500, hpMinReturnMs: 400 })],
+    ['平均×成功が総経過時間+1000ちょうど', hpRecord({
+      activeMs: 9000, hpSuccessCount: 10, hpSkipCount: 0, hpAvgReturnMs: 1000, hpMinReturnMs: 1000,
+    })],
+    ['確認なしの回数0', runRecord({ homePosition: false, hpSuccessCount: 0, hpSkipCount: 0 })],
+    ['確認なしで4項目とも省略', runRecord({ homePosition: false })],
+  ])('ホームポジション項目: %sは受理する', (_label, valid) => {
+    expect(env.post(postRuns([valid]))).toEqual(runResponse(1))
+  })
+
+  it.each([
+    ['成功回数の小数', hpRecord({ hpSuccessCount: 1.5 })],
+    ['成功回数の負数', hpRecord({ hpSuccessCount: -1 })],
+    ['成功回数の上限超過', hpRecord({ hpSuccessCount: 100_001 })],
+    ['成功回数の文字列', hpRecord({ hpSuccessCount: '9' })],
+    ['スキップ回数の上限超過', hpRecord({ hpSkipCount: 100_001 })],
+    ['スキップ回数の負数', hpRecord({ hpSkipCount: -1 })],
+    ['平均の上限超過', hpRecord({ hpAvgReturnMs: 86_400_001 })],
+    ['平均の小数', hpRecord({ hpAvgReturnMs: 1200.5 })],
+    ['最短の負数', hpRecord({ hpMinReturnMs: -1 })],
+    ['最短の上限超過', hpRecord({ hpMinReturnMs: 86_400_001 })],
+    ['確認なしなのに成功あり', runRecord({ homePosition: false, hpSuccessCount: 1 })],
+    ['確認なしなのにスキップあり', runRecord({ homePosition: false, hpSkipCount: 1 })],
+    ['確認なしなのに平均あり', runRecord({ homePosition: false, hpAvgReturnMs: 1000 })],
+    ['確認なしなのに最短あり', runRecord({ homePosition: false, hpMinReturnMs: 1000 })],
+    ['成功0なのに平均あり', hpRecord({ hpSuccessCount: 0, hpMinReturnMs: null })],
+    ['成功0なのに最短あり', hpRecord({ hpSuccessCount: 0, hpAvgReturnMs: null })],
+    ['最短が平均より2以上大きい', hpRecord({ hpAvgReturnMs: 500, hpMinReturnMs: 502 })],
+    ['最短が平均より1大きい(丸めの許容なし)', hpRecord({ hpAvgReturnMs: 500, hpMinReturnMs: 501 })],
+    ['確認ありで成功回数が省略', hpRecord({ hpSuccessCount: undefined })],
+    ['確認ありでスキップ回数が省略', hpRecord({ hpSkipCount: undefined })],
+    ['確認ありで成功回数がnull', hpRecord({ hpSuccessCount: null })],
+    ['確認ありで4項目とも省略', runRecord({ homePosition: true })],
+    ['成功ありなのに平均がnull', hpRecord({ hpAvgReturnMs: null })],
+    ['成功ありなのに最短がnull', hpRecord({ hpMinReturnMs: null })],
+    ['成功+スキップが完了問題数を超える', hpRecord({ hpSuccessCount: 9, hpSkipCount: 2 })],
+    ['平均が総経過時間を超える', hpRecord({
+      hpSuccessCount: 1, hpSkipCount: 0, hpAvgReturnMs: 12_346, hpMinReturnMs: 800,
+    })],
+    ['平均×成功が総経過時間+1000を超える', hpRecord({
+      activeMs: 9000, hpSuccessCount: 10, hpSkipCount: 0, hpAvgReturnMs: 1001, hpMinReturnMs: 1000,
+    })],
+  ])('ホームポジション項目: %sは拒否する', (_label, invalid) => {
+    expect(env.post(postRuns([invalid]))).toEqual(runResponse(0, 1, [invalid.id]))
+    expect(env.dataRows('runs')).toEqual([])
+  })
+
+  describe('runsシートのヘッダー移行', () => {
+    const legacyRow = () => [
+      new Date(NOW), 'run-old-1', '2026-11-02T03:00:00.000Z', 'dev-mine-01', 'free', 'left', 1,
+      false, 'jis', null, null, false, 'ended', 5000, 4000, 3, 20, 1, 21, 95, 300, 0, '', 'old1234',
+    ]
+
+    it('旧24列ヘッダーなら、ロック内で新4列の見出しを追記して続行し、既存行は変えない', () => {
+      env.seedSheet('runs', [LEGACY_RUN_HEADERS, legacyRow()])
+      expect(env.post(postRuns([hpRecord()]))).toEqual(runResponse(1))
+
+      const rows = env.rowsFor('runs')
+      expect(rows[0]).toEqual(RUN_HEADERS)
+      // 旧行はそのまま(新4列は空欄=セルなし)
+      expect(rows[1]).toEqual(legacyRow())
+      expect(rows[1]).toHaveLength(24)
+      expect(rows[2]).toHaveLength(28)
+      expect(rows[2].slice(-4)).toEqual([9, 1, 1200, 800])
+      // ヘッダー追記はロックの内側(waitLockの後、releaseLockの前)で、25列目から4セルだけ
+      const headerWrite = env.events.indexOf('set:1:25')
+      expect(headerWrite).toBeGreaterThan(env.events.indexOf('waitLock'))
+      expect(headerWrite).toBeLessThan(env.events.lastIndexOf('releaseLock'))
+      expect(env.events.filter((event) => event === 'set:1:25')).toHaveLength(1)
+    })
+
+    it('二重に移行せず、移行済みのシートへそのまま追記する', () => {
+      env.seedSheet('runs', [LEGACY_RUN_HEADERS])
+      expect(env.post(postRuns([hpRecord()]))).toEqual(runResponse(1))
+      expect(env.post(postRuns([hpRecord({ id: 'run-0002' })]))).toEqual(runResponse(1))
+      expect(env.rowsFor('runs')[0]).toEqual(RUN_HEADERS)
+      expect(env.rowsFor('runs')[0]).toHaveLength(28)
+      expect(env.events.filter((event) => event === 'set:1:25')).toHaveLength(1)
+      expect(env.dataRows('runs').map((row) => row[1])).toEqual(['run-0001', 'run-0002'])
+    })
+
+    it('旧クライアントの記録(新4項目なし)でも旧ヘッダーを移行して受理する', () => {
+      env.seedSheet('runs', [LEGACY_RUN_HEADERS])
+      expect(env.post(postRuns([runRecord()]))).toEqual(runResponse(1))
+      expect(env.rowsFor('runs')[0]).toEqual(RUN_HEADERS)
+      expect(env.dataRows('runs')[0].slice(-4)).toEqual(['', '', '', ''])
+    })
+
+    it('検証で拒否された記録だけの送信では、シートを触らず移行もしない', () => {
+      env.seedSheet('runs', [LEGACY_RUN_HEADERS])
+      expect(env.post(postRuns([runRecord({ accuracy: 0 })]))).toEqual(runResponse(0, 1, ['run-0001']))
+      expect(env.rowsFor('runs')).toEqual([LEGACY_RUN_HEADERS])
+    })
+
+    it.each([
+      ['旧ヘッダーの1セルが違う', [...LEGACY_RUN_HEADERS.slice(0, 5), 'modeX', ...LEGACY_RUN_HEADERS.slice(6)]],
+      ['旧ヘッダーの末尾が欠けている(23列)', LEGACY_RUN_HEADERS.slice(0, 23)],
+      ['25列(新列が途中まで)', [...LEGACY_RUN_HEADERS, 'hpSuccessCount']],
+      ['27列(新列が途中まで)', RUN_HEADERS.slice(0, 27)],
+      ['29列', [...RUN_HEADERS, 'extra']],
+      ['新4列の名前が違う', [...LEGACY_RUN_HEADERS, 'hpSuccessCount', 'hpSkipCount', 'avg', 'hpMinReturnMs']],
+      ['24列で順序が違う', [LEGACY_RUN_HEADERS[1], LEGACY_RUN_HEADERS[0], ...LEGACY_RUN_HEADERS.slice(2)]],
+    ])('%sは書き込まずsheet_header_mismatchにする', (_label, header) => {
+      env.seedSheet('runs', [header])
+      expect(env.post(postRuns([hpRecord()]))).toEqual({ ok: false, error: 'sheet_header_mismatch' })
+      expect(env.rowsFor('runs')).toEqual([header])
+    })
+
+    it('列を足さないと範囲外の書き込みで落ちる(新規作成の26列グリッド・24列だけの旧シート)', () => {
+      // 新規作成: 既定26列に28列のヘッダーを書くため、先に列を足す
+      expect(env.post(postRuns([hpRecord()]))).toEqual(runResponse(1))
+      expect(env.events).toContain('insertColumnsAfter:26:2')
+      expect(env.events.indexOf('insertColumnsAfter:26:2')).toBeLessThan(env.events.indexOf('set:1:1'))
+      expect(env.rowsFor('runs')[0]).toEqual(RUN_HEADERS)
+
+      // 24列ちょうどのグリッドの旧シート: 25〜28列目を書く前に4列足す
+      const legacy = createEnvironment()
+      legacy.seedSheet('runs', [LEGACY_RUN_HEADERS, legacyRow()], { maxColumns: 24 })
+      expect(legacy.post(postRuns([hpRecord()]))).toEqual(runResponse(1))
+      expect(legacy.events).toContain('insertColumnsAfter:24:4')
+      expect(legacy.events.indexOf('insertColumnsAfter:24:4')).toBeLessThan(legacy.events.indexOf('set:1:25'))
+      expect(legacy.rowsFor('runs')[0]).toEqual(RUN_HEADERS)
+    })
+
+    it('既定の26列グリッドの旧シートも、27〜28列目が範囲外にならないよう列を足してから移行する', () => {
+      env.seedSheet('runs', [LEGACY_RUN_HEADERS, legacyRow()])
+      expect(env.post(postRuns([hpRecord()]))).toEqual(runResponse(1))
+      expect(env.events).toContain('insertColumnsAfter:26:2')
+      expect(env.rowsFor('runs')[0]).toEqual(RUN_HEADERS)
+    })
+
+    it('ヘッダー移行・追記のあと、ロックを手放す前にflushする', () => {
+      env.seedSheet('runs', [LEGACY_RUN_HEADERS])
+      expect(env.post(postRuns([hpRecord()]))).toEqual(runResponse(1))
+      const flush = env.events.lastIndexOf('flush')
+      expect(flush).toBeGreaterThan(env.events.lastIndexOf('set:2:1'))
+      expect(flush).toBeLessThan(env.events.lastIndexOf('releaseLock'))
+    })
+
+    it('新ヘッダーと完全一致するシートはそのまま使い、ヘッダーを書き直さない', () => {
+      env.seedSheet('runs', [RUN_HEADERS])
+      expect(env.post(postRuns([hpRecord()]))).toEqual(runResponse(1))
+      expect(env.events.filter((event) => event.startsWith('set:1:'))).toEqual([])
+    })
   })
 
   it.each([

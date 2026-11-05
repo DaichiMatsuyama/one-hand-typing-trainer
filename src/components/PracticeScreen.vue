@@ -15,6 +15,8 @@ const {
   session,
   resetNotice,
   clearEffect,
+  homePositionCheck,
+  pauseReasons,
   layout,
   nextKey,
   nextFinger,
@@ -76,6 +78,8 @@ onBeforeUnmount(() => props.engine.detach())
         :layout-variant="settings.layoutVariant"
         :is-complete="session.isComplete"
         :start-hint="waitingForFirstKey"
+        :home-check="homePositionCheck"
+        @skip-home="engine.skipHomePosition"
       />
 
       <ResultView
@@ -93,6 +97,7 @@ onBeforeUnmount(() => props.engine.detach())
         :next-key="nextKey"
         :next-finger="nextFinger"
         :completed-questions="runSummary.completedQuestions"
+        :home-checking="Boolean(homePositionCheck)"
         @reset="resetQuestion"
         @reset-all="resetAllStats"
       />
@@ -116,7 +121,12 @@ onBeforeUnmount(() => props.engine.detach())
       :next-key="nextKey"
       :feedback="session.feedback"
       :disabled="session.isComplete || session.preserved || menuOpen"
+      :home-position="homePositionCheck"
+      :home-position-paused="menuOpen || pauseReasons.size > 0"
       @press="pressKey"
+      @home-established="engine.confirmHomePosition"
+      @home-released="engine.completeHomePosition"
+      @home-reset="engine.resetHomePosition"
     />
 
     <div

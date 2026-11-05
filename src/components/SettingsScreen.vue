@@ -22,6 +22,11 @@ function toggleSymbols(event) {
   updateSettings({ includeSymbols: event.target.checked })
 }
 
+// 練習モード・手・レベルとは独立した設定。問題はそのままで、確認の有無だけを切り替える。
+function toggleHomePosition(event) {
+  updateSettings({ homePosition: event.target.checked })
+}
+
 function selectMode(mode) {
   if (mode !== settings.value.mode) updateSettings({ mode })
 }
@@ -148,9 +153,25 @@ function limitLabel(seconds) {
         <p class="mode-description" data-testid="mode-description">{{ modeDescriptions[settings.mode] }}</p>
       </section>
 
-      <button type="button" class="start-practice-button" data-testid="start-practice" @click="emit('start')">
-        練習を始める
-      </button>
+      <div class="settings-footer">
+        <label class="symbol-toggle home-position-toggle">
+          <input
+            type="checkbox"
+            :checked="settings.homePosition"
+            aria-label="ホームポジション確認"
+            aria-describedby="home-position-description"
+            data-testid="home-position"
+            @change="toggleHomePosition"
+          />
+          <span class="symbol-label">
+            <span>ホームポジション確認</span>
+            <small id="home-position-description">問題ごとに、指を置き直したか確認します</small>
+          </span>
+        </label>
+        <button type="button" class="start-practice-button" data-testid="start-practice" @click="emit('start')">
+          練習を始める
+        </button>
+      </div>
     </section>
 
     <small class="build-id" data-testid="build-id">{{ BUILD_ID }}</small>
