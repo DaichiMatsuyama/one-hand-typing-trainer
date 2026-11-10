@@ -19,6 +19,7 @@ export const defaultSettings = Object.freeze({
   targetCount: DEFAULT_TARGET_COUNT,
   timeLimitSec: DEFAULT_TIME_LIMIT_SEC,
   feedbackEffects: true,
+  touchRipple: true,
   homePosition: false,
 })
 
@@ -45,6 +46,8 @@ function sanitizeSettings(settings = {}) {
       ? source.timeLimitSec
       : DEFAULT_TIME_LIMIT_SEC,
     feedbackEffects: source.feedbackEffects !== false,
+    // 古い保存値には項目がないため、falseが明示された場合だけOFFにする。
+    touchRipple: source.touchRipple !== false,
     // 練習モードとは独立した「ホームポジション確認」。既定はOFF(true以外はOFF)。
     homePosition: source.homePosition === true,
   }

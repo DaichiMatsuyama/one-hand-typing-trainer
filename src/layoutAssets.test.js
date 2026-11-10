@@ -142,6 +142,21 @@ describe('実機向けレイアウト', () => {
     expect(styles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.keyboard-clear-effect-circle\s*\{[\s\S]*?animation:\s*none !important/)
   })
 
+  it('水滴演出はfixed配置でtransformとopacityだけを動かし、reduced-motionでは広げない', () => {
+    const ripple = styles.match(/\.touch-ripple\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    const keyframes = styles.match(/@keyframes touch-ripple-spread\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(ripple).toMatch(/position:\s*fixed/)
+    expect(ripple).toMatch(/pointer-events:\s*none/)
+    expect(ripple).toMatch(/width:\s*16px/)
+    expect(ripple).toMatch(/border:\s*2\.5px/)
+    expect(ripple).toMatch(/animation:\s*touch-ripple-spread 540ms ease-out/)
+    expect(keyframes).toMatch(/opacity:\s*0\.55/)
+    expect(keyframes).toMatch(/opacity:\s*0/)
+    expect(keyframes).toMatch(/scale\(5\)/)
+    expect(keyframes).not.toMatch(/(?:width|height|top|left):/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.touch-ripple,[\s\S]*?width:\s*28px[\s\S]*?animation:\s*none !important/)
+  })
+
   it('ホームポジション確認: スキップは44px以上でメニューと見分けがつき、強調は動きを減らす設定でパルスしない', () => {
     const skip = styles.match(/\.home-skip-button\s*\{([\s\S]*?)\}/)?.[1] ?? ''
     expect(skip).toMatch(/min-height:\s*44px/)

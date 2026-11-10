@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import KeyboardView from './components/KeyboardView.vue'
@@ -6,6 +7,22 @@ import { AUTO_ADVANCE_MS } from './appConfig.js'
 import { getQuestion } from './data/questionBank.js'
 import { STORAGE_KEY, STORAGE_VERSION } from './services/storage.js'
 import { completeCurrentQuestion, openPracticeMenu, startPractice } from './test/app.js'
+
+async function dispatchTouch(target, pointerId = 1) {
+  const event = new MouseEvent('pointerdown', {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    clientX: 120,
+    clientY: 180,
+  })
+  Object.defineProperties(event, {
+    pointerId: { value: pointerId },
+    pointerType: { value: 'touch' },
+  })
+  target.element.dispatchEvent(event)
+  await nextTick()
+}
 
 describe('App', () => {
   beforeEach(() => {
@@ -367,6 +384,28 @@ describe('App', () => {
     await completeCurrentQuestion(wrapper)
 
     expect(wrapper.find('[data-testid="keyboard-clear-effect"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('タッチ位置の演出をOFFにすると輪を作らず、ONでもメニューを開いたら全て消す', async () => {
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="touch-ripple"]').setValue(false)
+    await startPractice(wrapper)
+    await dispatchTouch(wrapper.get('.key'), 201)
+    expect(document.body.querySelectorAll('.touch-ripple')).toHaveLength(0)
+
+    await openPracticeMenu(wrapper)
+    await wrapper.get('[data-testid="menu-to-settings"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-yes"]').trigger('click')
+    await wrapper.get('[data-testid="touch-ripple"]').setValue(true)
+    await startPractice(wrapper)
+    const expected = wrapper.get('.prompt-text .current').text()
+    await dispatchTouch(wrapper.get(`[data-key="${expected}"]`), 202)
+    expect(document.body.querySelectorAll('.touch-ripple')).toHaveLength(1)
+    expect(document.body.querySelector('.touch-ripple').classList).toContain('is-correct')
+
+    await openPracticeMenu(wrapper)
+    expect(document.body.querySelectorAll('.touch-ripple')).toHaveLength(0)
     wrapper.unmount()
   })
 

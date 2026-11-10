@@ -9,6 +9,10 @@ const MAX_PENDING_CLICKS_PER_KEY = 8
 const HOME_CONTACT_GAP_MULTIPLIER = 2
 const HOME_CONTACT_KEY_SIZE_RATIO = 0.3
 const HOME_CONTACT_OUTER_VERTICAL_RATIO = 0.25
+const TOUCH_RIPPLE_REMOVE_MS = 600
+const TOUCH_RIPPLE_REDUCED_REMOVE_MS = 300
+const MAX_TOUCH_RIPPLES = 6
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 
 const props = defineProps({
   layout: { type: Object, required: true },
@@ -19,6 +23,7 @@ const props = defineProps({
   homePosition: { type: Object, default: null },
   // メニュー表示・縦向き・非表示などで停止中は、確認の接触を追跡しない。
   homePositionPaused: { type: Boolean, default: false },
+  touchRipple: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(['press', 'home-established', 'home-released', 'home-reset'])
@@ -29,6 +34,8 @@ const pointerTargets = new Map()
 const homeContacts = new Map()
 // 成立した時点で、成立に使った接触(対象キーごとに最初の1本)のpointerId。成立前はnull。
 let homeUsedPointers = null
+const touchRipples = ref([])
+let touchRippleId = 0
 
 const legend = computed(() => {
   const ids = [...new Set(props.layout.rows.flatMap((row) => row.keys.map((item) => item.finger)))]
@@ -92,13 +99,13 @@ function isHomeCheckTracking() {
 // 対象の4キーそれぞれに1本以上の接触が同時にあれば成立。順番に置いてよく、
 // 対象外のキー・余分な接触・同じキーの重複は成立の邪魔にも入力ミスにもしない。
 function trackHomeContact(event, key) {
-  if (!isHomeCheckTracking()) return
+  if (!isHomeCheckTracking()) return false
   const targets = props.homePosition.keys
-  if (!targets.includes(key)) return
+  if (!targets.includes(key)) return false
   // pointerIdが再利用された場合は、新しい接触として数え直す。
   homeContacts.delete(event.pointerId)
   homeContacts.set(event.pointerId, key)
-  if (homeUsedPointers) return
+  if (homeUsedPointers) return true
 
   const firstPointerByKey = new Map()
   for (const [pointerId, key] of homeContacts) {
@@ -108,6 +115,58 @@ function trackHomeContact(event, key) {
     homeUsedPointers = new Set(firstPointerByKey.values())
     emit('home-established')
   }
+  return true
+}
+
+function removeTouchRipple(id) {
+  const ripple = touchRipples.value.find((item) => item.id === id)
+  if (!ripple) return
+  clearTimeout(ripple.timer)
+  touchRipples.value = touchRipples.value.filter((item) => item.id !== id)
+}
+
+function clearTouchRipples() {
+  for (const ripple of touchRipples.value) clearTimeout(ripple.timer)
+  touchRipples.value = []
+}
+
+function prefersReducedMotion() {
+  try {
+    return Boolean(window.matchMedia?.(REDUCED_MOTION_QUERY).matches)
+  } catch {
+    return false
+  }
+}
+
+// 入力処理の後に呼び、演出側の失敗が入力へ波及しないようにする。
+function showTouchRipple(event, tone) {
+  if (!props.touchRipple || props.homePositionPaused || event.pointerType !== 'touch') return
+  try {
+    const reducedMotion = prefersReducedMotion()
+    touchRippleId += 1
+    const ripple = {
+      id: touchRippleId,
+      x: event.clientX,
+      y: event.clientY,
+      tone,
+      reducedMotion,
+      timer: undefined,
+    }
+    while (touchRipples.value.length >= MAX_TOUCH_RIPPLES) {
+      removeTouchRipple(touchRipples.value[0].id)
+    }
+    ripple.timer = setTimeout(
+      () => removeTouchRipple(ripple.id),
+      reducedMotion ? TOUCH_RIPPLE_REDUCED_REMOVE_MS : TOUCH_RIPPLE_REMOVE_MS,
+    )
+    touchRipples.value = [...touchRipples.value, ripple]
+  } catch {
+    // 視覚演出を作れなくても、キー入力とホームポジション確認は継続する。
+  }
+}
+
+function touchRippleStyle(ripple) {
+  return { left: `${ripple.x}px`, top: `${ripple.y}px` }
 }
 
 function distanceFromRect(x, y, rect) {
@@ -151,10 +210,14 @@ function findNearbyHomeKey(event) {
 }
 
 function handlePanelPointerDown(event) {
-  if (event.button !== 0 || !isHomeCheckTracking()) return
+  if (event.button !== 0) return
   if (event.target?.closest?.('.key')) return
-  const key = findNearbyHomeKey(event)
-  if (key) trackHomeContact(event, key)
+  let recognized = false
+  if (isHomeCheckTracking()) {
+    const key = findNearbyHomeKey(event)
+    if (key) recognized = trackHomeContact(event, key)
+  }
+  showTouchRipple(event, recognized ? 'recognized' : 'neutral')
 }
 
 // 離れた接触を外す。成立後に、成立に使った接触が離れたら成功を通知する。
@@ -175,6 +238,14 @@ watch(
   { flush: 'sync' },
 )
 
+watch(
+  [() => props.homePositionPaused, () => props.touchRipple, () => props.layout],
+  ([paused, enabled], [previousPaused, previousEnabled]) => {
+    if (paused || !enabled || paused !== previousPaused || enabled !== previousEnabled) clearTouchRipples()
+  },
+  { flush: 'sync' },
+)
+
 function clearPointerState() {
   for (const suppression of clickSuppressions.values()) {
     for (const mark of [...suppression.pendingClicks]) removePointerMark(mark)
@@ -186,6 +257,7 @@ function clearPointerState() {
 function handleWindowLoss() {
   discardHomeContacts()
   clearPointerState()
+  clearTouchRipples()
 }
 
 function pruneDetachedMarks() {
@@ -212,7 +284,9 @@ function handlePointerDown(event, item) {
   if (previousMark) removePointerMark(previousMark)
   if (event.button !== 0) return
 
-  trackHomeContact(event, item.value)
+  const expectedKey = props.nextKey
+  const wasDisabled = props.disabled
+  const recognized = trackHomeContact(event, item.value)
 
   const element = event.currentTarget
   let suppression = clickSuppressions.get(element)
@@ -238,6 +312,13 @@ function handlePointerDown(event, item) {
   pointerTargets.set(event.pointerId, mark)
 
   if (!props.disabled) emit('press', item.value)
+
+  const tone = props.homePosition
+    ? (recognized ? 'recognized' : 'neutral')
+    : (wasDisabled || !expectedKey
+        ? 'neutral'
+        : item.value === expectedKey ? 'correct' : 'incorrect')
+  showTouchRipple(event, tone)
 }
 
 function handlePointerFinish(event) {
@@ -306,6 +387,7 @@ onBeforeUnmount(() => {
   panel.value?.removeEventListener('gesturechange', preventKeyboardGesture, { passive: false })
   resetHomeTracking()
   clearPointerState()
+  clearTouchRipples()
 })
 </script>
 
@@ -371,5 +453,18 @@ onBeforeUnmount(() => {
         </span>
       </div>
     </div>
+
+    <Teleport to="body">
+      <span
+        v-for="ripple in touchRipples"
+        :key="ripple.id"
+        class="touch-ripple"
+        :class="[`is-${ripple.tone}`, { 'is-reduced-motion': ripple.reducedMotion }]"
+        :style="touchRippleStyle(ripple)"
+        data-testid="touch-ripple"
+        aria-hidden="true"
+        @animationend="removeTouchRipple(ripple.id)"
+      ></span>
+    </Teleport>
   </section>
 </template>

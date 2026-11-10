@@ -11,6 +11,10 @@
   --accent: #146c68;
   --accent-dark: #0b4e4b;
   --danger: #a92432;
+  --touch-ripple-correct: #177a4a;
+  --touch-ripple-incorrect: #c72f3e;
+  --touch-ripple-neutral: #687381;
+  --touch-ripple-recognized: #16788c;
 }
 
 * {
@@ -695,28 +699,39 @@ h1 {
 
 /* ホームポジション確認の切替は、開始ボタンの左隣へ置いて設定画面の高さを増やさない */
 .settings-footer {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
 
-.settings-screen .settings-footer .home-position-toggle {
-  flex: 1 1 0;
+.effect-toggles {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-screen .settings-footer .symbol-toggle {
   min-width: 0;
   justify-content: flex-start;
 }
 
-.home-position-toggle .symbol-label small {
+.settings-footer .symbol-label > span {
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.home-position-toggle .symbol-label small,
+.touch-ripple-toggle .symbol-label small {
   color: var(--muted);
-  font-size: 0.72rem;
-  line-height: 1.25;
+  font-size: 0.6rem;
+  line-height: 1.15;
   white-space: normal;
 }
 
 .settings-footer .start-practice-button {
-  flex: 0 0 min(52%, 320px);
-  width: auto;
+  width: 100%;
   margin: 0;
 }
 
@@ -1404,6 +1419,46 @@ h1 {
   font-size: min(22vh, 5.5rem);
 }
 
+/* タッチ位置の水滴演出。bodyへTeleportし、キー枠のoverflowに切られずビューポート座標で置く。 */
+.touch-ripple {
+  position: fixed;
+  z-index: 6;
+  width: 16px;
+  height: 16px;
+  border: 2.5px solid var(--touch-ripple-neutral);
+  border-radius: 50%;
+  opacity: 0.55;
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 70%);
+  transform: translate(-50%, -50%) scale(1);
+  transform-origin: center;
+  animation: touch-ripple-spread 540ms ease-out forwards;
+  will-change: transform, opacity;
+}
+
+.touch-ripple.is-correct {
+  border-color: var(--touch-ripple-correct);
+}
+
+.touch-ripple.is-incorrect {
+  border-color: var(--touch-ripple-incorrect);
+}
+
+.touch-ripple.is-recognized {
+  border-color: var(--touch-ripple-recognized);
+}
+
+.touch-ripple.is-neutral {
+  border-color: var(--touch-ripple-neutral);
+}
+
+.touch-ripple.is-reduced-motion {
+  width: 28px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  animation: none;
+}
+
 .finger-legend {
   display: flex;
   min-width: 0;
@@ -1483,6 +1538,11 @@ h1 {
   100% { opacity: 0; transform: scale(1.08); }
 }
 
+@keyframes touch-ripple-spread {
+  from { opacity: 0.55; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(5); }
+}
+
 @container practice (max-width: 732px) {
   .info-strip {
     gap: var(--strip-compact-grid-gap);
@@ -1535,6 +1595,24 @@ h1 {
     gap: 5px;
     padding-block: 5px;
     margin-bottom: 6px;
+  }
+
+  .settings-footer {
+    grid-template-columns: minmax(0, 1fr) minmax(230px, 48%);
+    gap: 8px;
+  }
+
+  .effect-toggles {
+    gap: 5px;
+  }
+
+  .settings-footer .symbol-label > span {
+    font-size: 0.65rem;
+  }
+
+  .home-position-toggle .symbol-label small,
+  .touch-ripple-toggle .symbol-label small {
+    font-size: 0.56rem;
   }
 }
 
@@ -1630,6 +1708,15 @@ h1 {
   .keyboard-clear-effect-circle {
     opacity: 0.72;
     transform: none;
+    animation: none !important;
+  }
+
+  .touch-ripple,
+  .touch-ripple.is-reduced-motion {
+    width: 28px;
+    height: 28px;
+    opacity: 0.55;
+    transform: translate(-50%, -50%);
     animation: none !important;
   }
 

@@ -23,7 +23,7 @@ describe('storage', () => {
       settings: {
         hand: 'right', level: 3, includeSymbols: true, layoutVariant: 'us',
         mode: 'timeAttack', targetCount: 30, timeLimitSec: 120, feedbackEffects: false,
-        homePosition: true,
+        touchRipple: false, homePosition: true,
       },
       results: { completedQuestions: 2, correctCount: 10, mistakes: 3, attempts: 13, practiceMs: 9000 },
       questionIndex: 4,
@@ -89,7 +89,7 @@ describe('storage', () => {
       settings: {
         hand: 'left', level: 1, includeSymbols: false, layoutVariant: 'jis',
         mode: 'free', targetCount: 10, timeLimitSec: 60, feedbackEffects: true,
-        homePosition: false,
+        touchRipple: true, homePosition: false,
       },
       results: { completedQuestions: 0, correctCount: 0, mistakes: 0, attempts: 0, practiceMs: 0 },
       questionIndex: 0,
@@ -123,6 +123,20 @@ describe('storage', () => {
       settings: { feedbackEffects },
     }))
     expect(loadAppState(storage).settings.feedbackEffects).toBe(expected)
+  })
+
+  it.each([
+    ['欠落', undefined, true],
+    ['true', true, true],
+    ['false', false, false],
+    ['不正な値', 'false', true],
+  ])('touchRippleが%sなら%sへ正規化する(既定はON)', (_label, touchRipple, expected) => {
+    const storage = memoryStorage()
+    storage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
+      settings: { touchRipple },
+    }))
+    expect(loadAppState(storage).settings.touchRipple).toBe(expected)
   })
 
   it.each([

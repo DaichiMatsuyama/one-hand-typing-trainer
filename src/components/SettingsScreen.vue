@@ -27,6 +27,10 @@ function toggleHomePosition(event) {
   updateSettings({ homePosition: event.target.checked })
 }
 
+function toggleTouchRipple(event) {
+  updateSettings({ touchRipple: event.target.checked })
+}
+
 function selectMode(mode) {
   if (mode !== settings.value.mode) updateSettings({ mode })
 }
@@ -154,20 +158,36 @@ function limitLabel(seconds) {
       </section>
 
       <div class="settings-footer">
-        <label class="symbol-toggle home-position-toggle">
-          <input
-            type="checkbox"
-            :checked="settings.homePosition"
-            aria-label="ホームポジション確認"
-            aria-describedby="home-position-description"
-            data-testid="home-position"
-            @change="toggleHomePosition"
-          />
-          <span class="symbol-label">
-            <span>ホームポジション確認</span>
-            <small id="home-position-description">問題ごとに、指を置き直したか確認します</small>
-          </span>
-        </label>
+        <div class="effect-toggles">
+          <label class="symbol-toggle home-position-toggle">
+            <input
+              type="checkbox"
+              :checked="settings.homePosition"
+              aria-label="ホームポジション確認"
+              aria-describedby="home-position-description"
+              data-testid="home-position"
+              @change="toggleHomePosition"
+            />
+            <span class="symbol-label">
+              <span>ホームポジション確認</span>
+              <small id="home-position-description">問題ごとに、指を置き直したか確認します</small>
+            </span>
+          </label>
+          <label class="symbol-toggle touch-ripple-toggle">
+            <input
+              type="checkbox"
+              :checked="settings.touchRipple"
+              aria-label="タッチ位置の演出"
+              aria-describedby="touch-ripple-description"
+              data-testid="touch-ripple"
+              @change="toggleTouchRipple"
+            />
+            <span class="symbol-label">
+              <span>タッチ位置の演出</span>
+              <small id="touch-ripple-description">触れた位置に、水滴のような輪を出します</small>
+            </span>
+          </label>
+        </div>
         <button type="button" class="start-practice-button" data-testid="start-practice" @click="emit('start')">
           練習を始める
         </button>

@@ -123,6 +123,7 @@ onBeforeUnmount(() => props.engine.detach())
       :disabled="session.isComplete || session.preserved || menuOpen"
       :home-position="homePositionCheck"
       :home-position-paused="menuOpen || pauseReasons.size > 0"
+      :touch-ripple="settings.touchRipple"
       @press="pressKey"
       @home-established="engine.confirmHomePosition"
       @home-released="engine.completeHomePosition"

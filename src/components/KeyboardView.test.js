@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getKeyboardLayout } from '../data/keyboardLayouts.js'
 import KeyboardView from './KeyboardView.vue'
 
+const originalMatchMedia = window.matchMedia
+
+function touchRipples() {
+  return [...document.body.querySelectorAll('.touch-ripple')]
+}
+
 function dispatchPointer(target, type, {
   pointerId = 1,
   pointerType = 'touch',
@@ -52,6 +58,8 @@ describe('KeyboardView', () => {
   afterEach(() => {
     wrapper?.unmount()
     wrapper = undefined
+    if (originalMatchMedia) window.matchMedia = originalMatchMedia
+    else delete window.matchMedia
     vi.clearAllTimers()
     vi.useRealTimers()
   })
@@ -302,7 +310,7 @@ describe('KeyboardView', () => {
   })
 
   it('レイアウト差し替えで古いキー要素の押下印を破棄する', async () => {
-    mountKeyboard()
+    mountKeyboard({ touchRipple: false })
 
     await dispatchPointer(wrapper.get('[data-key="q"]'), 'pointerdown', { pointerId: 80 })
     expect(vi.getTimerCount()).toBe(1)
@@ -315,7 +323,7 @@ describe('KeyboardView', () => {
   it('破棄時に抑止タイマーと登録したリスナーを解除する', async () => {
     const documentRemoveListener = vi.spyOn(document, 'removeEventListener')
     const windowRemoveListener = vi.spyOn(window, 'removeEventListener')
-    mountKeyboard()
+    mountKeyboard({ touchRipple: false })
     const key = wrapper.get('[data-key="q"]')
     const panel = wrapper.get('.keyboard-panel').element
 
@@ -367,6 +375,123 @@ describe('KeyboardView', () => {
     }
   })
 
+  describe('タッチ位置の水滴演出', () => {
+    it('正解と不正解のキーを色分けし、pointerdown座標へ入力emit後に表示する', async () => {
+      mountKeyboard({ nextKey: 'q' })
+
+      await dispatchPointer(wrapper.get('[data-key="q"]'), 'pointerdown', {
+        pointerId: 101, clientX: 125, clientY: 66,
+      })
+      await dispatchPointer(wrapper.get('[data-key="w"]'), 'pointerdown', {
+        pointerId: 102, clientX: 225, clientY: 76,
+      })
+
+      expect(wrapper.emitted('press')).toEqual([['q'], ['w']])
+      expect(touchRipples()).toHaveLength(2)
+      expect(touchRipples()[0].classList).toContain('is-correct')
+      expect(touchRipples()[0].style.left).toBe('125px')
+      expect(touchRipples()[0].style.top).toBe('66px')
+      expect(touchRipples()[1].classList).toContain('is-incorrect')
+      expect(touchRipples()[1].style.left).toBe('225px')
+      expect(touchRipples()[1].style.top).toBe('76px')
+    })
+
+    it('キー外と入力不可の通常キーはグレーにする', async () => {
+      mountKeyboard({ nextKey: 'q' })
+      await dispatchPointer(wrapper.get('.keyboard-stage'), 'pointerdown', {
+        pointerId: 103, clientX: 12, clientY: 34,
+      })
+      await wrapper.setProps({ disabled: true })
+      await dispatchPointer(wrapper.get('[data-key="q"]'), 'pointerdown', {
+        pointerId: 104, clientX: 56, clientY: 78,
+      })
+
+      expect(touchRipples()).toHaveLength(2)
+      expect(touchRipples().every((ripple) => ripple.classList.contains('is-neutral'))).toBe(true)
+    })
+
+    it('同時表示は6個までとし、7個目で最古を消す', async () => {
+      mountKeyboard({ nextKey: 'q' })
+      const key = wrapper.get('[data-key="q"]')
+      for (let index = 0; index < 7; index += 1) {
+        await dispatchPointer(key, 'pointerdown', {
+          pointerId: 110 + index,
+          clientX: 10 + index,
+          clientY: 20 + index,
+        })
+      }
+
+      expect(touchRipples()).toHaveLength(6)
+      expect(touchRipples().map((ripple) => ripple.style.left))
+        .toEqual(['11px', '12px', '13px', '14px', '15px', '16px'])
+    })
+
+    it('アニメーション終了または600msのタイマーで確実に消す', async () => {
+      mountKeyboard({ nextKey: 'q' })
+      await dispatchPointer(wrapper.get('[data-key="q"]'), 'pointerdown', { pointerId: 120 })
+      expect(touchRipples()).toHaveLength(1)
+
+      touchRipples()[0].dispatchEvent(new Event('animationend'))
+      await nextTick()
+      expect(touchRipples()).toHaveLength(0)
+
+      await dispatchPointer(wrapper.get('[data-key="q"]'), 'pointerdown', { pointerId: 121 })
+      await vi.advanceTimersByTimeAsync(599)
+      expect(touchRipples()).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(touchRipples()).toHaveLength(0)
+    })
+
+    it('停止・画面喪失・アンマウントで輪とタイマーをすべて消す', async () => {
+      mountKeyboard({ nextKey: 'q' })
+      const key = wrapper.get('[data-key="q"]')
+      await dispatchPointer(key, 'pointerdown', { pointerId: 130 })
+      await wrapper.setProps({ homePositionPaused: true })
+      expect(touchRipples()).toHaveLength(0)
+
+      await wrapper.setProps({ homePositionPaused: false })
+      await dispatchPointer(key, 'pointerdown', { pointerId: 131 })
+      window.dispatchEvent(new Event('pagehide'))
+      await nextTick()
+      expect(touchRipples()).toHaveLength(0)
+
+      await dispatchPointer(key, 'pointerdown', { pointerId: 132 })
+      wrapper.unmount()
+      wrapper = undefined
+      expect(touchRipples()).toHaveLength(0)
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('touchRipple=falseではDOMを作らない', async () => {
+      mountKeyboard({ nextKey: 'q', touchRipple: false })
+      await dispatchPointer(wrapper.get('[data-key="q"]'), 'pointerdown', { pointerId: 140 })
+      await dispatchPointer(wrapper.get('.keyboard-stage'), 'pointerdown', { pointerId: 141 })
+      expect(wrapper.emitted('press')).toEqual([['q']])
+      expect(touchRipples()).toHaveLength(0)
+    })
+
+    it('reduced-motionでは広がらない小さな円を300msだけ表示する', async () => {
+      window.matchMedia = vi.fn(() => ({ matches: true }))
+      mountKeyboard({ nextKey: 'q' })
+      await dispatchPointer(wrapper.get('[data-key="q"]'), 'pointerdown', { pointerId: 150 })
+
+      expect(touchRipples()).toHaveLength(1)
+      expect(touchRipples()[0].classList).toContain('is-reduced-motion')
+      await vi.advanceTimersByTimeAsync(299)
+      expect(touchRipples()).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(touchRipples()).toHaveLength(0)
+    })
+
+    it('輪はaria-hiddenでpointer-eventsを受け取らない', async () => {
+      mountKeyboard({ nextKey: 'q' })
+      await dispatchPointer(wrapper.get('[data-key="q"]'), 'pointerdown', { pointerId: 160 })
+      const ripple = touchRipples()[0]
+      expect(ripple.getAttribute('aria-hidden')).toBe('true')
+      expect(ripple.classList).toContain('touch-ripple')
+    })
+  })
+
   describe('ホームポジション確認の検出', () => {
     const LEFT_HOME = ['a', 's', 'd', 'f']
 
@@ -415,6 +540,19 @@ describe('KeyboardView', () => {
       'pointerdown',
       { pointerId, ...point },
     )
+
+    it('採用された対象キーと許容範囲内の隙間は認識色、対象外キーはグレーにする', async () => {
+      mountCheck()
+      mockHomeGeometry()
+      await press('a', 171)
+      await press('q', 172)
+      await touchPanel({ clientX: 195, clientY: 145 }, 173)
+
+      expect(touchRipples()).toHaveLength(3)
+      expect(touchRipples()[0].classList).toContain('is-recognized')
+      expect(touchRipples()[1].classList).toContain('is-neutral')
+      expect(touchRipples()[2].classList).toContain('is-recognized')
+    })
 
     it('4つの対象キーに順番に指を置くと、4本目で成立する(3本では成立しない)', async () => {
       mountCheck()

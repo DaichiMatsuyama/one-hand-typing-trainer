@@ -34,6 +34,11 @@ describe('設定・練習・結果の3画面', () => {
     expect(wrapper.get('[data-testid="level-lengths"]').text()).toContain('Lv.2 3〜5文字')
     expect(wrapper.get('[data-testid="level-lengths"]').text()).toContain('Lv.3 5〜10文字')
     expect(wrapper.get('[data-testid="build-id"]').text()).toMatch(/^版 (?:[0-9a-f]+|dev) · (?:\d{4}-\d{2}-\d{2}|dev)$/)
+    const touchRipple = wrapper.get('[data-testid="touch-ripple"]')
+    expect(touchRipple.element.checked).toBe(true)
+    expect(wrapper.get('.touch-ripple-toggle').text()).toContain('タッチ位置の演出')
+    expect(wrapper.get('.touch-ripple-toggle').text()).toContain('触れた位置に、水滴のような輪を出します')
+    await touchRipple.setValue(false)
 
     const symbols = wrapper.get('[data-testid="include-symbols"]')
     expect(symbols.element.disabled).toBe(true)
@@ -43,7 +48,7 @@ describe('設定・練習・結果の3画面', () => {
     await symbols.setValue(true)
 
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY))).toMatchObject({
-      settings: { hand: 'right', level: 3, includeSymbols: true },
+      settings: { hand: 'right', level: 3, includeSymbols: true, touchRipple: false },
       questionIndex: 0,
     })
     await startPractice(wrapper)
