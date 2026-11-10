@@ -10,6 +10,8 @@ export const LANDSCAPE_LAYOUT = Object.freeze({
   // 幅の狭い画面では、凡例の幅を守るため余白を小さくする。
   keyboardPanelPaddingInline: 12,
   keyboardPanelPaddingInlineNarrow: 4,
+  // 左手のAキーを画面端から離す目標余白。狭い画面では凡例の最小幅を残せる値まで下げる。
+  leftKeyboardPaddingTarget: 66,
   narrowViewportMax: 760,
   keyShadowDepth: 4,
   keyPitchMin: 49,
@@ -91,12 +93,12 @@ export function calculateLandscapeLayout({
   const keyboardHeightBudget = keyboardContentHeight - config.keyShadowDepth
   const keyboardPitchCount = getLayoutPitchCount(hand, layoutVariant)
   // キーボードの幅 = 個数 × pitch - gap(gap ≒ pitch × 比率)。枠の線と、外側の縁の余白を除いた幅に収める。
-  const panelPadding = width <= config.narrowViewportMax
+  const basePanelPadding = width <= config.narrowViewportMax
     ? config.keyboardPanelPaddingInlineNarrow
     : config.keyboardPanelPaddingInline
   const keyboardInnerWidth = availableWidth
     - config.keyboardPanelBorderInline
-    - panelPadding
+    - basePanelPadding
   const widthPitch = keyboardInnerWidth / (keyboardPitchCount - config.keyGapRatio)
   const heightPitch = keyboardHeightBudget / 3
   const keyPitch = clamp(
@@ -113,9 +115,19 @@ export function calculateLandscapeLayout({
   const keyboardWidth = keyboardPitchCount * keyPitch - keyGap
   const keyboardHeight = 3 * keyPitch - keyGap
   const keyboardVisualHeight = keyboardHeight + config.keyShadowDepth
+  const keyboardPanelClientWidth = availableWidth - config.keyboardPanelBorderInline
+  const panelPadding = hand === 'left'
+    ? Math.min(
+      config.leftKeyboardPaddingTarget,
+      Math.max(
+        basePanelPadding,
+        keyboardPanelClientWidth - keyboardWidth - config.legendMinimumWidth,
+      ),
+    )
+    : basePanelPadding
   const legendWidth = hand === 'right'
     ? 0.75 * keyPitch - keyGap
-    : keyboardInnerWidth - keyboardWidth
+    : keyboardPanelClientWidth - panelPadding - keyboardWidth
   const stripClientWidth = availableWidth - config.infoStripBorderInline
   const isCompact = availableWidth <= config.compactBreakpoint
   const statsWidth = isCompact
@@ -159,6 +171,9 @@ export function calculateLandscapeLayout({
     keyboardContentHeight,
     keyboardHeightBudget,
     keyboardPitchCount,
+    basePanelPadding,
+    panelPadding,
+    keyboardPanelClientWidth,
     widthPitch,
     heightPitch,
     keyPitch,
@@ -177,7 +192,8 @@ export function calculateLandscapeLayout({
     promptAvailableWidth,
     stripFits: requiredStripWidth <= stripClientWidth,
     legendFits: legendWidth >= config.legendMinimumWidth,
-    noHorizontalScroll: keyboardWidth <= availableWidth
+    // 幅基準でぴったり収まる場合の浮動小数点誤差だけを許容する。
+    noHorizontalScroll: panelPadding + keyboardWidth <= keyboardPanelClientWidth + 0.01
       && requiredStripWidth <= stripClientWidth,
     noVerticalScroll: keyboardVisualHeight <= keyboardContentHeight,
     hasMinimumTapTarget: keySize >= 44,

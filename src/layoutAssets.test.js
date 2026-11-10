@@ -70,6 +70,8 @@ describe('実機向けレイアウト', () => {
       keyboardPanelBorderInline: cssPxVariable('keyboard-panel-border-inline'),
       keyboardPanelPaddingInline: cssPxVariable('keyboard-panel-padding-inline'),
       keyboardPanelPaddingInlineNarrow: cssPxVariable('keyboard-panel-padding-inline-narrow'),
+      leftKeyboardPaddingTarget: cssPxVariable('left-keyboard-padding-target'),
+      legendMinimumWidth: cssPxVariable('left-legend-min-width'),
       narrowViewportMax: cssNumber(
         /@media\s*\(max-width:\s*([0-9.]+)px\)\s*\{\s*\.app-shell\s*\{\s*--keyboard-panel-padding-inline/,
         '余白を小さくする画面幅',
@@ -197,6 +199,7 @@ describe('実機向けレイアウト', () => {
     ['Dynamic Island搭載機', 852, 393, { left: 59, right: 59, bottom: 21 }],
     ['874x402', 874, 402, { left: 44, right: 44, bottom: 21 }],
     ['932x430', 932, 430, { left: 59, right: 59, bottom: 21 }],
+    ['iPad横画面', 1024, 768, { left: 0, right: 0, bottom: 0 }],
   ]
 
   it.each(landscapeCases)(
@@ -270,10 +273,58 @@ describe('実機向けレイアウト', () => {
     expect(slack).toBeGreaterThanOrEqual(LANDSCAPE_LAYOUT.keyboardPanelPaddingInline)
   })
 
-  it('幅の狭い画面(667pt)では余白を4pxに抑え、左手の凡例の幅を守る', () => {
+  it('幅の狭い画面(667pt)では右寄せ量を抑え、左手の凡例の幅を守る', () => {
     const metrics = calculateLandscapeLayout({ width: 667, height: 375, hand: 'left' })
     expect(metrics.legendFits).toBe(true)
     expect(metrics.legendWidth).toBeGreaterThanOrEqual(LANDSCAPE_LAYOUT.legendMinimumWidth)
+  })
+
+  it('左手のAキー左端を852x393で画面左端から90pt以上離し、キー寸法を維持する', () => {
+    const metrics = calculateLandscapeLayout({ width: 852, height: 393, hand: 'left' })
+    const homeRow = getKeyboardLayout('left').rows.find((row) => row.keys.some((key) => key.value === 'a'))
+    const aLeft = metrics.padding.left
+      + LANDSCAPE_LAYOUT.keyboardPanelBorderInline / 2
+      + metrics.panelPadding
+      + homeRow.offset * metrics.keyPitch
+
+    expect(metrics.panelPadding).toBe(LANDSCAPE_LAYOUT.leftKeyboardPaddingTarget)
+    expect(aLeft).toBeGreaterThanOrEqual(90)
+    expect(aLeft).toBeCloseTo(100.25, 1)
+    expect(metrics.keyPitch).toBe(metrics.heightPitch)
+    expect(styles).toMatch(/\.keyboard-panel\[data-hand="left"\] \.keyboard-stage\s*\{[\s\S]*?padding-left:\s*min\([\s\S]*?--left-keyboard-padding-target[\s\S]*?--left-legend-min-width/)
+  })
+
+  it('667x375の左手はキーを従来寸法の95%以上に保ち、キー群と凡例を枠内へ収める', () => {
+    const metrics = calculateLandscapeLayout({ width: 667, height: 375, hand: 'left' })
+    const previousKeyPitch = Math.min(
+      LANDSCAPE_LAYOUT.keyPitchMax,
+      metrics.widthPitch,
+      metrics.heightPitch,
+    )
+
+    expect(metrics.keyPitch).toBeGreaterThanOrEqual(previousKeyPitch * 0.95)
+    expect(
+      metrics.panelPadding + metrics.keyboardWidth + LANDSCAPE_LAYOUT.legendMinimumWidth,
+    ).toBeLessThanOrEqual(metrics.keyboardPanelClientWidth)
+    expect(metrics.legendFits).toBe(true)
+  })
+
+  it('右手は従来の基準余白と幅計算を変えない', () => {
+    const metrics = calculateLandscapeLayout({
+      width: 852,
+      height: 393,
+      safeArea: { left: 59, right: 59, bottom: 21 },
+      hand: 'right',
+    })
+    const expectedPadding = LANDSCAPE_LAYOUT.keyboardPanelPaddingInline
+    expect(metrics.panelPadding).toBe(expectedPadding)
+    expect(metrics.basePanelPadding).toBe(expectedPadding)
+    expect(metrics.widthPitch).toBeCloseTo(
+      (metrics.availableWidth - LANDSCAPE_LAYOUT.keyboardPanelBorderInline - expectedPadding)
+        / (metrics.keyboardPitchCount - LANDSCAPE_LAYOUT.keyGapRatio),
+      5,
+    )
+    expect(styles).toMatch(/\.keyboard-panel\[data-hand="right"\] \.keyboard-stage\s*\{[\s\S]*?padding-right:\s*var\(--keyboard-panel-padding-inline\)/)
   })
 
   it('左手とUS右手は5.75ピッチのままにする', () => {

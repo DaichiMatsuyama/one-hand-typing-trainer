@@ -6,6 +6,9 @@ const CLICK_SUPPRESSION_MS = 1000
 const ZERO_DETAIL_CLICK_SUPPRESSION_MS = 100
 const POINTER_FAILSAFE_MS = 30000
 const MAX_PENDING_CLICKS_PER_KEY = 8
+const HOME_CONTACT_GAP_MULTIPLIER = 2
+const HOME_CONTACT_KEY_SIZE_RATIO = 0.3
+const HOME_CONTACT_OUTER_VERTICAL_RATIO = 0.25
 
 const props = defineProps({
   layout: { type: Object, required: true },
@@ -88,13 +91,13 @@ function isHomeCheckTracking() {
 
 // 対象の4キーそれぞれに1本以上の接触が同時にあれば成立。順番に置いてよく、
 // 対象外のキー・余分な接触・同じキーの重複は成立の邪魔にも入力ミスにもしない。
-function trackHomeContact(event, item) {
+function trackHomeContact(event, key) {
   if (!isHomeCheckTracking()) return
   const targets = props.homePosition.keys
-  if (!targets.includes(item.value)) return
+  if (!targets.includes(key)) return
   // pointerIdが再利用された場合は、新しい接触として数え直す。
   homeContacts.delete(event.pointerId)
-  homeContacts.set(event.pointerId, item.value)
+  homeContacts.set(event.pointerId, key)
   if (homeUsedPointers) return
 
   const firstPointerByKey = new Map()
@@ -105,6 +108,53 @@ function trackHomeContact(event, item) {
     homeUsedPointers = new Set(firstPointerByKey.values())
     emit('home-established')
   }
+}
+
+function distanceFromRect(x, y, rect) {
+  const dx = Math.max(rect.left - x, 0, x - rect.right)
+  const dy = Math.max(rect.top - y, 0, y - rect.bottom)
+  return Math.hypot(dx, dy)
+}
+
+// キーの隙間や周囲の余白から、最も近いホームポジション対象キーを探す。
+// ほかのキー要素上の接触は呼び出し側で除外し、判定を広げない。
+function findNearbyHomeKey(event) {
+  const keyElements = [...(panel.value?.querySelectorAll('.key') ?? [])]
+    .filter((element) => homeTargetKeys.value.has(element.dataset.key))
+  if (keyElements.length === 0) return null
+
+  const candidates = keyElements.map((element) => ({
+    key: element.dataset.key,
+    rect: element.getBoundingClientRect(),
+  }))
+  const leftToRight = [...candidates].sort((first, second) => first.rect.left - second.rect.left)
+  const gap = leftToRight.slice(1).reduce((largest, candidate, index) => (
+    Math.max(largest, candidate.rect.left - leftToRight[index].rect.right)
+  ), 0)
+  const nearest = candidates.reduce((best, candidate) => {
+    const distance = distanceFromRect(event.clientX, event.clientY, candidate.rect)
+    return !best || distance < best.distance ? { ...candidate, distance } : best
+  }, null)
+  const keySize = Math.max(nearest.rect.width, nearest.rect.height)
+  const allowance = Math.max(gap * HOME_CONTACT_GAP_MULTIPLIER, keySize * HOME_CONTACT_KEY_SIZE_RATIO)
+  if (nearest.distance <= allowance) return nearest.key
+
+  const panelRect = panel.value.getBoundingClientRect()
+  const outerTarget = props.layout.hand === 'left' ? leftToRight[0] : leftToRight.at(-1)
+  const verticalAllowance = outerTarget.rect.height * HOME_CONTACT_OUTER_VERTICAL_RATIO
+  const withinOuterRow = event.clientY >= outerTarget.rect.top - verticalAllowance
+    && event.clientY <= outerTarget.rect.bottom + verticalAllowance
+  const withinOuterEdge = props.layout.hand === 'left'
+    ? event.clientX >= panelRect.left && event.clientX < outerTarget.rect.left
+    : event.clientX > outerTarget.rect.right && event.clientX <= panelRect.right
+  return withinOuterRow && withinOuterEdge ? outerTarget.key : null
+}
+
+function handlePanelPointerDown(event) {
+  if (event.button !== 0 || !isHomeCheckTracking()) return
+  if (event.target?.closest?.('.key')) return
+  const key = findNearbyHomeKey(event)
+  if (key) trackHomeContact(event, key)
 }
 
 // 離れた接触を外す。成立後に、成立に使った接触が離れたら成功を通知する。
@@ -162,7 +212,7 @@ function handlePointerDown(event, item) {
   if (previousMark) removePointerMark(previousMark)
   if (event.button !== 0) return
 
-  trackHomeContact(event, item)
+  trackHomeContact(event, item.value)
 
   const element = event.currentTarget
   let suppression = clickSuppressions.get(element)
@@ -239,6 +289,7 @@ onMounted(() => {
   document.addEventListener('pointercancel', handlePointerFinish)
   window.addEventListener('pagehide', handleWindowLoss)
   window.addEventListener('blur', handleWindowLoss)
+  panel.value?.addEventListener('pointerdown', handlePanelPointerDown, { capture: true })
   panel.value?.addEventListener('gesturestart', preventKeyboardGesture, { passive: false })
   panel.value?.addEventListener('gesturechange', preventKeyboardGesture, { passive: false })
 })
@@ -250,6 +301,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointercancel', handlePointerFinish)
   window.removeEventListener('pagehide', handleWindowLoss)
   window.removeEventListener('blur', handleWindowLoss)
+  panel.value?.removeEventListener('pointerdown', handlePanelPointerDown, { capture: true })
   panel.value?.removeEventListener('gesturestart', preventKeyboardGesture, { passive: false })
   panel.value?.removeEventListener('gesturechange', preventKeyboardGesture, { passive: false })
   resetHomeTracking()

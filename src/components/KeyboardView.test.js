@@ -4,8 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getKeyboardLayout } from '../data/keyboardLayouts.js'
 import KeyboardView from './KeyboardView.vue'
 
-function dispatchPointer(target, type, { pointerId = 1, pointerType = 'touch', button = 0 } = {}) {
-  const event = new MouseEvent(type, { bubbles: true, cancelable: true, button })
+function dispatchPointer(target, type, {
+  pointerId = 1,
+  pointerType = 'touch',
+  button = 0,
+  clientX = 0,
+  clientY = 0,
+} = {}) {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    button,
+    clientX,
+    clientY,
+  })
   Object.defineProperties(event, {
     pointerId: { value: pointerId },
     pointerType: { value: pointerType },
@@ -375,6 +387,35 @@ describe('KeyboardView', () => {
     const established = () => wrapper.emitted('home-established')?.length ?? 0
     const released = () => wrapper.emitted('home-released')?.length ?? 0
 
+    function rect(left, top, width, height) {
+      return {
+        x: left,
+        y: top,
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
+        width,
+        height,
+        toJSON: () => {},
+      }
+    }
+
+    function mockHomeGeometry(keys = LEFT_HOME) {
+      vi.spyOn(wrapper.get('.keyboard-panel').element, 'getBoundingClientRect')
+        .mockReturnValue(rect(0, 0, 600, 300))
+      keys.forEach((key, index) => {
+        vi.spyOn(wrapper.get(`[data-key="${key}"]`).element, 'getBoundingClientRect')
+          .mockReturnValue(rect(100 + index * 100, 100, 90, 90))
+      })
+    }
+
+    const touchPanel = (point, pointerId = 1) => dispatchPointer(
+      wrapper.get('.keyboard-stage'),
+      'pointerdown',
+      { pointerId, ...point },
+    )
+
     it('4つの対象キーに順番に指を置くと、4本目で成立する(3本では成立しない)', async () => {
       mountCheck()
       await press('a', 1)
@@ -398,6 +439,75 @@ describe('KeyboardView', () => {
         homePosition: { id: 1, keys: ['j', 'k', 'l', ';'], established: false },
       })
       await Promise.all([['j', 1], ['k', 2], ['l', 3], [';', 4]].map(([key, id]) => press(key, id)))
+      expect(established()).toBe(1)
+    })
+
+    it.each([
+      ['キーの隙間', { clientX: 195, clientY: 145 }],
+      ['Aの左外側からパネル端まで', { clientX: 20, clientY: 145 }],
+      ['ホーム段の縦方向の余裕', { clientX: 145, clientY: 78 }],
+    ])('%sの接触を最寄りのAへの接触として成立に使う', async (_label, point) => {
+      mountCheck()
+      mockHomeGeometry()
+      await touchPanel(point, 1)
+      await Promise.all(['s', 'd', 'f'].map((key, index) => press(key, index + 2)))
+      expect(established()).toBe(1)
+    })
+
+    it('通常の許容距離と外側端の縦範囲を超えた接触は無視する', async () => {
+      mountCheck()
+      mockHomeGeometry()
+      await touchPanel({ clientX: 145, clientY: 65 }, 1)
+      await touchPanel({ clientX: 20, clientY: 70 }, 2)
+      await Promise.all(['s', 'd', 'f'].map((key, index) => press(key, index + 3)))
+      expect(established()).toBe(0)
+    })
+
+    it('ほかの行と対象外のキー要素上では拡張判定しない', async () => {
+      mountCheck()
+      mockHomeGeometry()
+      await press('q', 1)
+      await press('g', 2)
+      await Promise.all(['s', 'd', 'f'].map((key, index) => press(key, index + 3)))
+      expect(established()).toBe(0)
+      expect(wrapper.emitted('press')).toBeUndefined()
+    })
+
+    it('確認中でないときはパネル余白のpointerdownを入力にも接触にも使わない', async () => {
+      mountKeyboard()
+      await touchPanel({ clientX: 20, clientY: 145 }, 1)
+      expect(established()).toBe(0)
+      expect(wrapper.emitted('press')).toBeUndefined()
+    })
+
+    it('停止中はパネル余白の接触を追跡しない', async () => {
+      mountCheck({ homePositionPaused: true })
+      mockHomeGeometry()
+      await touchPanel({ clientX: 20, clientY: 145 }, 1)
+      await wrapper.setProps({ homePositionPaused: false })
+      await Promise.all(['s', 'd', 'f'].map((key, index) => press(key, index + 2)))
+      expect(established()).toBe(0)
+    })
+
+    it('パネル余白から始まった接触も同じpointerIdの離脱で成功する', async () => {
+      mountCheck()
+      mockHomeGeometry()
+      await touchPanel({ clientX: 20, clientY: 145 }, 1)
+      await Promise.all(['s', 'd', 'f'].map((key, index) => press(key, index + 2)))
+      expect(established()).toBe(1)
+      await dispatchPointer(document, 'pointerup', { pointerId: 1 })
+      expect(released()).toBe(1)
+    })
+
+    it('右手でもセミコロンの右外側からパネル端までを対称に扱う', async () => {
+      const rightHome = ['j', 'k', 'l', ';']
+      mountCheck({
+        layout: getKeyboardLayout('right'),
+        homePosition: { id: 1, keys: rightHome, established: false },
+      })
+      mockHomeGeometry(rightHome)
+      await touchPanel({ clientX: 580, clientY: 145 }, 4)
+      await Promise.all(['j', 'k', 'l'].map((key, index) => press(key, index + 1)))
       expect(established()).toBe(1)
     })
 

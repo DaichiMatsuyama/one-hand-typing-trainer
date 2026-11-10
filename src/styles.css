@@ -78,6 +78,8 @@ input:focus-visible {
   --keyboard-panel-border-inline: 2px;
   --keyboard-panel-padding-inline: 12px;
   --keyboard-panel-padding-inline-narrow: 4px;
+  --left-keyboard-padding-target: 66px;
+  --left-legend-min-width: 52px;
   --key-shadow-depth: 4px;
   --key-pitch-min: 49px;
   --key-pitch-max: 115px;
@@ -1197,11 +1199,21 @@ h1 {
   align-items: center;
 }
 
-/* キーボードの外側の縁(左手は左、右手は右)から、枠との間に余白をあける */
+/* 左手はAキーを画面端から離す。狭い幅では凡例52pxを残せる範囲まで余白を下げる。 */
 .keyboard-panel[data-hand="left"] .keyboard-stage {
-  padding-left: var(--keyboard-panel-padding-inline);
+  padding-left: min(
+    var(--left-keyboard-padding-target),
+    max(
+      var(--keyboard-panel-padding-inline),
+      calc(
+        100% - ((var(--key-pitch) * var(--keyboard-pitch-count)) - var(--key-gap))
+        - var(--left-legend-min-width)
+      )
+    )
+  );
 }
 
+/* 右手の配置は従来どおり、外側の縁に基準余白だけを置く。 */
 .keyboard-panel[data-hand="right"] .keyboard-stage {
   flex-direction: row-reverse;
   padding-right: var(--keyboard-panel-padding-inline);
